@@ -1,4 +1,5 @@
 import type { BugKind } from '../game/bugs';
+import type { GuideStep } from './hints';
 
 /**
  * 主界面上展示用的静态数据。00~05 都能玩，field 对应 game/fields.ts 里的战场；locked 的样式还留着，以后加锁着的图直接用。
@@ -17,8 +18,8 @@ export interface MapInfo {
   id: string;
   /** 对应的战场定义（game/fields.ts）。锁着的图为空。 */
   field: string;
-  /** 教学关：开局后在画面上逐条给提示。 */
-  hints?: string[];
+  /** 教学关：开局后在画面下方一步步引导。 */
+  hints?: GuideStep[];
   index: string;
   name: string;
   code: string;
@@ -52,20 +53,20 @@ export const MAPS: MapInfo[] = [
     code: 'TRAINING GROUND',
     locked: false,
     difficulty: 1,
-    desc: '一条很窄的训练通道，只有一个班的机枪兵把守，来的也只是零星的小虫。熟悉防线怎么运转、兵营怎么补人，再上真正的战场。',
+    desc: '一条很窄的训练通道，开局什么都没有：用晶矿建兵营、机器人车间和炮台，亲手搭起第一道防线。来的只是零星的小虫，跟着引导熟悉建造和升级。',
     stats: [
       { label: '战区类型', value: '新手引导' },
-      { label: '敌群规模', value: '少量' },
-      { label: '推荐时长', value: '2 分钟' },
+      { label: '初始晶矿', value: '200' },
+      { label: '推荐时长', value: '5 分钟' },
       { label: '首通奖励', value: '300' },
     ],
     enemies: enemies('crawler', 'hopper'),
     hints: [
-      '欢迎来到新兵训练场！虫群会从画面上方的通道涌下来。',
-      '机枪兵会自动射击正前方的虫子。这条通道很窄，正好练手。',
-      '机枪兵被咬光血会倒下，后方的兵营会自动造兵、把缺口补上。',
-      '滚动鼠标滚轮可以缩放镜头，按住左键拖动可以平移。',
-      '守住防线，别让虫子碰到后方的兵营和指挥中心！',
+      { text: '欢迎来到新兵训练场！这里还什么都没有，虫群也暂时不会来。先用晶矿把防线建起来。' },
+      { text: '你有 200 晶矿。点击这里的「兵营」（或按数字键 1）。', wait: 'placing-barracks', target: 'build:barracks' },
+      { text: '把兵营移到亮出来的基地空地上：绿色表示可以建造，红色不行。左键放下，右键或 Esc 取消。', wait: 'built-barracks', target: 'area:base' },
+      { text: '选中兵营，在亮出的范围里右键点地面，设置集结点。', wait: 'rally', target: 'rally:barracks' },
+      { text: '兵营会自动出兵，点击建筑可以升级。打死虫子能获得晶矿，用来造更多建筑或呼叫轰炸支援。守住水晶核心！' },
     ],
   },
   {

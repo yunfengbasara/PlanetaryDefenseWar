@@ -49,6 +49,11 @@ export class Hud {
     host.appendChild(this.over);
   }
 
+  /** 把别的面板（建造列表）挂在晶矿下面。 */
+  attach(el: HTMLElement): void {
+    this.bar.appendChild(el);
+  }
+
   show(): void {
     this.bar.classList.remove('hidden');
     this.over.classList.add('hidden');

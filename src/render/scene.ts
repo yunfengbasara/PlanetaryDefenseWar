@@ -59,6 +59,11 @@ export class Scene {
     return (px * this.dpr) / this.camera.magnify;
   }
 
+  /** 缓冲像素 → CSS 像素（把战场里的点换算到界面上，比如建筑头顶的弹出面板）。 */
+  bufferToCss(px: number): number {
+    return (px * this.camera.magnify) / this.dpr;
+  }
+
   /**
    * @param shakeX 镜头抖动，世界单位。加在整像素对齐之后，所以抖动也是一格一格的。
    */

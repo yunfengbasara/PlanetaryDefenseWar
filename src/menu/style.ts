@@ -336,28 +336,35 @@ export const MENU_CSS = `
 
 /* ---------------------------------------------------------------- 教学提示 */
 .pdw-hint {
-  position: absolute; left: 50%; bottom: 24px; z-index: 6; width: min(560px, calc(100% - 32px));
-  transform: translateX(-50%); padding: 12px 16px 12px;
+  /* 位置由脚本摆：贴在这一步要操作的地方旁边；没有要操作的地方就在左下角。 */
+  position: absolute; left: 16px; top: 16px; z-index: 9; width: 340px;
+  padding: 12px 16px 12px;
   color: var(--text); font: 14px/1.6 "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
   background: rgba(9, 14, 26, .9); border: 2px solid var(--line-hi);
   clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
-  transition: opacity .2s, transform .2s; box-sizing: border-box;
+  transition: opacity .2s; box-sizing: border-box;
 }
 .pdw-hint::before { content: ""; position: absolute; left: 0; top: 0; width: 64px; height: 3px; background: var(--orange); }
-.pdw-hint.hidden { opacity: 0; pointer-events: none; transform: translate(-50%, 10px); }
+.pdw-hint.hidden { opacity: 0; pointer-events: none; }
 .pdw-hint-head { display: flex; align-items: baseline; gap: 10px; }
 .pdw-hint-head b { color: var(--orange); letter-spacing: 2px; }
 .pdw-hint-step { font: 700 11px Consolas, monospace; color: var(--muted); }
 .pdw-hint-text { margin: 6px 0 8px; font-size: 15px; }
-.pdw-hint-bar { height: 3px; background: #0b1020; }
-.pdw-hint-bar i { display: block; height: 100%; width: 0; background: var(--blue-hi); }
-.pdw-hint-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.pdw-hint-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 10px; }
+/* 要玩家动手的那一步：不给"下一步"，显示一个在等的小灯；做到了变绿。 */
+.pdw-hint-wait { display: none; align-items: center; gap: 6px; margin-right: auto; font-size: 12px; color: var(--muted); }
+.pdw-hint-wait i { width: 7px; height: 7px; background: var(--orange); animation: pdw-blink 1s steps(2) infinite; }
+.pdw-hint.waiting .pdw-hint-wait { display: flex; }
+.pdw-hint.waiting [data-act=next] { display: none; }
+.pdw-hint.done { border-color: var(--green); }
+.pdw-hint.done .pdw-hint-wait { color: var(--green); }
+.pdw-hint.done .pdw-hint-wait i { background: var(--green); animation: none; }
 .pdw-hint-actions .pdw-btn { height: 30px; padding: 0 12px; font-size: 12px; }
 
 /* ---------------------------------------------------------------- 局内 HUD */
 .pdw-hud {
-  position: absolute; inset: 12px 12px auto 12px; z-index: 5; pointer-events: none;
-  display: flex; justify-content: flex-end; align-items: flex-start;
+  position: absolute; inset: 12px 12px auto auto; z-index: 5; pointer-events: none;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
   color: var(--text); font: 13px/1.4 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   transition: opacity .2s;
 }
@@ -373,7 +380,7 @@ export const MENU_CSS = `
 
 /* ---------------------------------------------------------------- 失败结算 */
 .pdw-over {
-  position: absolute; inset: 0; z-index: 8; display: grid; place-items: center;
+  position: absolute; inset: 0; z-index: 10; display: grid; place-items: center;
   background: radial-gradient(ellipse at center, rgba(40, 6, 10, .55), rgba(3, 4, 8, .85));
   color: var(--text); font: 14px/1.5 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   animation: pdw-fade .4s ease;
@@ -393,4 +400,86 @@ export const MENU_CSS = `
 .pdw-over-stats b { font: 700 20px Consolas, monospace; }
 .pdw-over-actions { display: flex; justify-content: center; gap: 10px; }
 .pdw-over-actions .pdw-btn { min-width: 130px; }
+
+/* ---------------------------------------------------------------- 建造列表 */
+.pdw-build { display: flex; flex-direction: column; gap: 6px; pointer-events: auto; transition: opacity .2s; }
+.pdw-build.hidden { display: none; }
+.pdw-build-item {
+  position: relative; display: flex; align-items: center; gap: 8px; width: 176px; padding: 4px 10px 4px 4px;
+  color: var(--text); font: inherit; text-align: left; cursor: pointer;
+  background: rgba(9, 14, 26, .86); border: 2px solid var(--line);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  transition: border-color .12s, background .12s;
+}
+.pdw-build-item:hover { border-color: var(--blue-hi); background: rgba(36, 54, 90, .9); }
+.pdw-build-item.active { border-color: var(--orange); background: rgba(80, 50, 20, .85); }
+.pdw-build-item.off { opacity: .45; cursor: not-allowed; }
+.pdw-build-item.off:hover { border-color: var(--line); background: rgba(9, 14, 26, .86); }
+.pdw-build-item canvas {
+  flex: none; width: 56px; height: 44px; image-rendering: pixelated;
+  background: radial-gradient(ellipse at 50% 65%, rgba(130, 166, 240, .16), transparent 70%);
+}
+.pdw-build-text { display: flex; flex-direction: column; min-width: 0; }
+.pdw-build-text b { font-size: 13px; letter-spacing: 1px; white-space: nowrap; }
+.pdw-build-text span { display: flex; align-items: center; gap: 3px; font: 700 12px Consolas, monospace; color: #8fe6ff; }
+.pdw-build-text svg { width: 11px; height: 11px; color: #5fd8e8; }
+.pdw-build-item kbd {
+  position: absolute; right: 6px; top: 4px; font: 700 10px Consolas, monospace; color: var(--dim);
+}
+
+/* ---------------------------------------------------------------- 建筑升级面板（头顶弹出） */
+.pdw-tip {
+  /* 半透明、不挡鼠标：隔着面板也能看到后面、右键设集结点；只有按钮能点（见下面的 pointer-events: auto）。 */
+  position: absolute; z-index: 8; width: 268px; padding: 8px 10px 10px; pointer-events: none;
+  transform: translate(-50%, -100%);
+  color: var(--text); font: 12px/1.5 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  background: rgba(9, 14, 26, .62); border: 2px solid rgba(130, 166, 240, .75);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+.pdw-tip.hidden { display: none; }
+.pdw-tip::before { content: ""; position: absolute; left: 0; top: 0; width: 48px; height: 3px; background: var(--orange); }
+.pdw-tip-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.pdw-tip-head b { font-size: 14px; letter-spacing: 2px; }
+.pdw-tip button { pointer-events: auto; }
+.pdw-tip-x {
+  margin-left: auto; width: 20px; height: 20px; padding: 0; line-height: 16px; cursor: pointer;
+  color: var(--muted); background: transparent; border: 1px solid var(--line); font-size: 14px;
+}
+.pdw-tip-x:hover { color: #fff; border-color: var(--blue-hi); }
+.pdw-tip-prod { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; padding: 4px 8px; background: rgba(20, 30, 52, .4); border-left: 2px solid var(--line-hi); }
+.pdw-tip-prod span { color: var(--muted); }
+.pdw-tip-prod b { font: 700 14px Consolas, monospace; }
+.pdw-tip-prod em { margin-left: auto; font-style: normal; color: #6ed2ff; }
+.pdw-tip-prod em.ok { color: var(--green); }
+.pdw-tip-prod em.warn { color: var(--orange); }
+.pdw-tip-hint { margin: -2px 0 6px; font-size: 11px; color: #ffc446; }
+.pdw-tip-stats { display: flex; flex-direction: column; gap: 3px; }
+.pdw-tip-stat {
+  display: grid; grid-template-columns: 56px 30px 1fr 64px; align-items: center; gap: 4px;
+  height: 28px; padding: 0 2px 0 8px; background: rgba(20, 30, 52, .32);
+}
+.pdw-tip-foot { margin-top: 6px; display: flex; justify-content: flex-end; }
+.pdw-tip-sell { height: 24px; padding: 0 10px; font-size: 12px; letter-spacing: 1px; background: #7a3a2a; }
+.pdw-tip-sell:hover { background: #e0705a; }
+.pdw-tip-sell.armed { background: #e0505a; color: #fff; }
+.pdw-tip-name { color: #c8d4ee; white-space: nowrap; }
+.pdw-tip-lv { font: 700 11px Consolas, monospace; color: #ffc446; }
+.pdw-tip-val { font: 700 11px Consolas, monospace; color: var(--muted); white-space: nowrap; }
+.pdw-tip-up { height: 24px; padding: 0 6px; gap: 3px; font: 700 11px Consolas, monospace; letter-spacing: 0; }
+.pdw-tip-up svg { width: 10px; height: 10px; color: #5fd8e8; }
+.pdw-tip-max { display: none; text-align: center; font-size: 11px; color: #ffc446; letter-spacing: 2px; }
+.pdw-tip-stat.max .pdw-tip-up { display: none; }
+.pdw-tip-stat.max .pdw-tip-max { display: block; }
+
+/* ---------------------------------------------------------------- 新手引导遮罩 */
+.pdw-mask { position: absolute; inset: 0; z-index: 7; pointer-events: none; }
+.pdw-mask.hidden { display: none; }
+/* 四块压暗的板子围出一个洞：板子挡点击、挡滚轮，洞里照常操作。 */
+.pdw-mask-shade { position: absolute; background: rgba(2, 4, 10, .66); pointer-events: auto; }
+.pdw-mask-frame {
+  position: absolute; pointer-events: none; box-sizing: border-box;
+  border: 2px solid var(--orange); box-shadow: 0 0 0 2px rgba(0, 0, 0, .5), 0 0 16px rgba(240, 150, 58, .55);
+  animation: pdw-breathe 1.2s ease-in-out infinite;
+}
+@keyframes pdw-breathe { 50% { border-color: #ffe0a0; box-shadow: 0 0 0 2px rgba(0, 0, 0, .5), 0 0 26px rgba(255, 190, 90, .8); } }
 `;

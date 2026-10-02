@@ -27,10 +27,14 @@ export interface FieldDef {
   gunships: boolean;
   /** 地图在通道最宽处之外还有多宽的可看内容（镜头横向能拖到哪儿）。默认 30。 */
   edge?: number;
+  /** 建造模式：开局空地图，玩家自己造兵营、车间、炮塔；引导走完才刷怪。 */
+  build?: boolean;
+  /** 建造模式的初始晶矿。 */
+  startCrystals?: number;
 }
 
 export const FIELDS: Record<string, FieldDef> = {
-  /** 00 新兵训练场：通道很窄，只有五六个机枪兵，只来小爬虫和跳虫，节奏慢。 */
+  /** 00 新兵训练场：建造模式。通道很窄，开局空地图 + 200 晶矿，只来小爬虫和跳虫，节奏慢。 */
   'training-ground': {
     id: 'training-ground',
     theme: 'space',
@@ -38,7 +42,9 @@ export const FIELDS: Record<string, FieldDef> = {
     wide: 235,
     spawnRate: 4,
     maxAlive: 60,
-    initial: 24,
+    initial: 0,
+    build: true,
+    startCrystals: 200,
     mix: [
       ['crawler', 0.82],
       ['hopper', 0.18],

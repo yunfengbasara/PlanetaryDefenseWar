@@ -615,3 +615,58 @@ export function crystalCore(m: Mesh3, p: { t: number; hit: number; broken?: bool
   }
   return m;
 }
+
+/**
+ * 机器人车间：一座宽大的装配厂房。正面（+X）一扇落地的大卷帘门（door 0..1 = 关..开），门洞里亮着
+ * 装配线的灯；屋顶两条导轨上一台吊车来回挪；侧面两座配电塔、后部两根排气管。原创造型。
+ * 占地约 80×84，高约 58；门洞够一台步行机甲直着走出来。t 是时间（秒）。
+ */
+export function mechFactory(m: Mesh3, p: { t: number; door: number }, L: Livery = LIVERY_BLUE): Mesh3 {
+  const metal = L.base;
+  const dark = L.dark;
+  const mid = lerpColor(metal, dark, 0.38);
+  // 地基和主厂房：墙往里收一点，正面是平的（门在上面）。
+  m.box(-41, 41, -43, 43, 0, 3, dark);
+  m.taper(-38, 36, -40, 40, 3, 46, 3, 0, 3, metal);
+  // 墙腰一圈蓝色装甲带，四角护角。
+  m.box(-38.6, 36.6, -40.6, 40.6, 30, 34, L.panel);
+  for (const sy of [-1, 1]) {
+    m.box(30, 37, sy * 40.8 - 4, sy * 40.8 + 4, 3, 47, L.panel);
+    m.box(-39, -32, sy * 40.8 - 4, sy * 40.8 + 4, 3, 47, mid);
+  }
+  // 屋顶：一层收窄的顶板 + 中间一道天窗。
+  m.taper(-35, 33, -37, 37, 46, 52, 3, 3, 3, mid);
+  m.box(-26, 22, -5, 5, 52, 53.5, L.glow, true);
+  // 屋顶吊车：两条导轨，一台横梁在上面来回挪，吊钩下垂。
+  for (const sy of [-1, 1]) m.box(-30, 28, sy * 26 - 1.5, sy * 26 + 1.5, 52, 55, dark);
+  const cx = Math.sin(p.t * 0.6) * 20;
+  m.box(cx - 4, cx + 4, -30, 30, 55, 58, L.panel);
+  m.box(cx - 2, cx + 2, -3, 3, 50, 55, dark);
+  // 正面大门：门框（蓝）、门洞里的装配灯、卷帘门板（往上卷）、下沿警示条、门楣灯牌。
+  m.box(36, 39, -24, 24, 3, 44, L.panel);
+  m.box(38.6, 39.2, -19, 19, 3, 40, rgb(255, 214, 140), true);
+  const top = 40;
+  const bottom = 3 + p.door * 36;
+  if (top - bottom > 0.3) {
+    m.box(39, 40, -19, 19, bottom, top, mid);
+    for (let z = bottom + 3; z < top - 0.5; z += 3.5) m.box(39.8, 40.2, -18.5, 18.5, z, z + 0.7, dark);
+  }
+  hazardStripeY(m, 39, 40.6, -24, 24, 3, 4.8, L);
+  m.box(39, 40, -12, 12, 41, 44, dark);
+  for (let i = 0; i < 5; i++) m.box(39.8, 40.3, -9 + i * 4.5 - 1, -9 + i * 4.5 + 1, 41.8, 43.2, L.glow, true);
+  // 门开着的时候门洞两侧的警示灯转起来。
+  for (const sy of [-1, 1]) {
+    const on = p.door > 0.05 && Math.sin(p.t * 8 + sy) > 0;
+    m.box(39, 41, sy * 22 - 1.5, sy * 22 + 1.5, 44, 47, on ? rgb(255, 170, 60) : lerpColor(rgb(255, 170, 60), dark, 0.7), on);
+  }
+  // 两侧配电塔：方柱 + 一排发光的格栅 + 顶灯。
+  for (const sy of [-1, 1]) {
+    m.box(-20, -6, sy * 40, sy * 47, 3, 38, mid);
+    for (let i = 0; i < 4; i++) m.box(-18 + i * 3.4, -16.4 + i * 3.4, sy * 47 - 0.3, sy * 47 + 0.3, 20, 30, L.glow, true);
+    const on = Math.sin(p.t * 2.2 + sy * 1.4) > 0.3;
+    m.box(-15, -11, sy * 42.5 - 2, sy * 42.5 + 2, 38, 41, on ? L.glow : lerpColor(L.glow, dark, 0.7), on);
+  }
+  // 后部两根排气管。
+  for (const sy of [-1, 1]) m.prism('z', 46, 60, -30, sy * 18, 3.2, dark, 8);
+  return m;
+}
