@@ -3,7 +3,8 @@ import { v2 } from '../core/math';
 import { Camera } from '../render/camera';
 import { Projection } from '../render/projection';
 import { Scene } from '../render/scene';
-import { AIRSTRIKE_COST, BUILDS, type BuildKind, type StatKey } from './buildings';
+import { AIRSTRIKE_COST, BUILDS, CRUISER_ID, type BuildKind, type StatKey } from './buildings';
+import { ARM, CROSS_C } from './crossmap';
 import { field, useField } from './fields';
 import { END_Y, LANE_CX, TOP_Y } from './floor';
 import { BUILD_FRONT, CORE, DefenseScene, RALLY_MAX, type StructureInfo } from './scene';
@@ -23,6 +24,8 @@ export interface DefenseHandle {
   cancelPlace(): void;
   /** 叫一次轰炸支援。 */
   airstrike(): boolean;
+  /** 买巨舰（一局一次）。 */
+  buyCruiser(): boolean;
   /** 卖掉一座建筑（退 70% 总花费）。 */
   sell(id: number): boolean;
   /** 升级一座建筑的某条升级线。 */
@@ -31,10 +34,14 @@ export interface DefenseHandle {
   structure(id: number): (StructureInfo & { anchorX: number; anchorY: number }) | null;
   /** 取消选中。 */
   deselect(): void;
+  /** 选中某座建筑（或者 CRUISER_ID = 巨舰）。 */
+  selectById(id: number): void;
   /** 升级面板上鼠标停在"射程"那一行：在地上多画一圈升级后的射程。 */
   previewRange(on: boolean): void;
   /** 虫群开始进攻（引导走完 / 跳过）。 */
   startWaves(): void;
+  /** 提前叫下一波：返回给的晶矿（叫不了是 -1）。 */
+  nextWave(): number;
   /** 选中的建筑变了（点到建筑 / 点到空地）。 */
   onSelect(fn: (id: number | null) => void): void;
   /** 引导遮罩用：某种建筑（第一座）在舞台上框住它的矩形；建造区在舞台上的矩形。CSS 像素。 */
@@ -60,8 +67,10 @@ export interface BattleState {
   lostT: number;
   /** 这一局打了多久（秒）。 */
   time: number;
-  /** 建造模式的状态；别的地图是 null。 */
-  build: BuildState | null;
+  /** 波次：当前第几波（0 = 还没开始）、离下一波几秒、下一波多少只、场上 + 排队的虫、提前叫能拿多少晶矿；虫群开始进攻了没有。 */
+  wave: { current: number; nextIn: number; nextSize: number; left: number; bonus: number; started: boolean };
+  /** 建造相关的状态（放置中、造了什么、巨舰、引导用的标记）。 */
+  build: BuildState;
 }
 
 export interface BuildState {
@@ -73,6 +82,8 @@ export interface BuildState {
   built: Record<BuildKind, number>;
   /** 防线上的机枪兵（活着的）。 */
   marines: number;
+  /** 巨舰：这张图能不能买、买了没有。 */
+  cruiser: 'available' | 'bought' | 'none';
   /** 当前选中的建筑；selectedEver：玩家点开过建筑；rallyEver：玩家设过集结点（引导用）。 */
   selected: number | null;
   selectedEver: boolean;
@@ -89,7 +100,7 @@ const SNAP = 4;
 /**
  * 阵地防守。镜头固定在防线后上方，往上看着敌人推过来；滚轮缩放、左键拖动平移。
  * 建造模式下：左键点空地放建筑（放置模式时）或者点选建筑（弹升级面板），右键 / Esc 取消放置；
- * 选中兵营 / 车间时右键地面设集结点。
+ * 选中兵营 / 车间时右键地面设集结点；选中巨舰时右键让它慢慢开过去。
  *
  * 只在 start() 之后才有战场、才更新；主界面期间什么都不跑。
  */
@@ -106,6 +117,11 @@ export function bootDefense(app: Application): DefenseHandle {
 
   /** 默认取景：横向装下平台和两侧一截虚空；纵向从敌人压过来的地方一直看到后方的核心。 */
   const home = (): { grain: number; x: number; y: number } => {
+    // 十字高地：框住整个十字（核心在正中）。
+    if (field().layout === 'cross') {
+      const lift = (40 * Projection.heightSquash) / Projection.groundSquash;
+      return { grain: cam.grainToFit(ARM * 2 + 40, ARM * 2 + lift, 4), x: CROSS_C.x, y: CROSS_C.y - lift / 2 };
+    }
     const y0 = 175;
     const y1 = CORE.y + 62; // 一直看到后方的核心和它下面的血条、读数
     const lift = (20 * Projection.heightSquash) / Projection.groundSquash;
@@ -116,6 +132,7 @@ export function bootDefense(app: Application): DefenseHandle {
    * 在默认取景里）；纵向从地图顶边到底边。镜头的可视范围必须落在这里面，比它大就居中。
    */
   const bounds = (): { l: number; r: number; t: number; b: number } => {
+    if (field().layout === 'cross') return { l: CROSS_C.x - ARM - 40, r: CROSS_C.x + ARM + 40, t: CROSS_C.y - ARM - 40, b: CROSS_C.y + ARM + 40 };
     const h = home();
     const homeHalfW = cam.viewWidth / 2 / h.grain;
     const wide = field().wide;
@@ -185,6 +202,7 @@ export function bootDefense(app: Application): DefenseHandle {
     if (e.button === 2) {
       // 右键：放置模式下取消；选中了兵营 / 车间就把集结点设到这儿。
       if (placing) cancelPlace();
+      else if (battle.selected === CRUISER_ID) battle.moveCruiser(toWorld(e).x, toWorld(e).y);
       else if (battle.selected !== null && battle.setRally(battle.selected, toWorld(e).x, toWorld(e).y)) rallyEver = true;
       return;
     }
@@ -205,7 +223,7 @@ export function bootDefense(app: Application): DefenseHandle {
   app.canvas.addEventListener('pointerup', (e) => {
     const p = press;
     press = null;
-    if (!battle || !p || p.moved || !battle.buildMode) return;
+    if (!battle || !p || p.moved) return;
     // 一次点击：放置模式下放建筑；否则点选建筑（点到空地就取消选中）。
     const w = toWorld(e);
     // 放置模式下点到已有的建筑：退出放置，改成选中它。
@@ -225,7 +243,8 @@ export function bootDefense(app: Application): DefenseHandle {
       }
       return;
     }
-    select(hitStruct?.id ?? null);
+    // 没点到建筑：看看是不是点到了巨舰（它浮在战场旁边）。
+    select(hitStruct?.id ?? (battle.cruiserAt(w.x, w.y) ? CRUISER_ID : null));
   });
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && battle) {
@@ -302,26 +321,27 @@ export function bootDefense(app: Application): DefenseHandle {
         lost: b.lost,
         lostT: b.lostT,
         time: b.time,
-        build: b.buildMode
-          ? {
-              waves: b.waves,
-              placing,
-              built: {
-                barracks: b.structures.filter((s) => s.kind === 'barracks').length,
-                factory: b.structures.filter((s) => s.kind === 'factory').length,
-                tank: b.structures.filter((s) => s.kind === 'tank').length,
-                artillery: b.structures.filter((s) => s.kind === 'artillery').length,
-              },
-              marines: b.defenders.filter((d) => d.kind === 'rifle' && d.deadT < 0).length,
-              selected: b.selected,
-              selectedEver,
-              rallyEver,
-            }
-          : null,
+        wave: { current: b.wave, nextIn: b.nextIn, nextSize: b.nextWaveSize, left: b.bugsLeft, bonus: b.earlyBonus, started: b.waves },
+        build: {
+          waves: b.waves,
+          placing,
+          built: {
+            barracks: b.structures.filter((s) => s.kind === 'barracks').length,
+            factory: b.structures.filter((s) => s.kind === 'factory').length,
+            tank: b.structures.filter((s) => s.kind === 'tank').length,
+            artillery: b.structures.filter((s) => s.kind === 'artillery').length,
+            cruiser: b.cruiserBought ? 1 : 0,
+          },
+          marines: b.defenders.filter((d) => d.kind === 'rifle' && d.deadT < 0).length,
+          cruiser: !b.field.cruiser ? 'none' : b.cruiserBought ? 'bought' : 'available',
+          selected: b.selected,
+          selectedEver,
+          rallyEver,
+        }
       };
     },
     beginPlace: (kind) => {
-      if (!battle?.buildMode || battle.lost || battle.crystals < BUILDS[kind].cost) return false;
+      if (!battle || battle.lost || battle.crystals < BUILDS[kind].cost) return false;
       placing = kind;
       select(null);
       refreshGhost();
@@ -329,6 +349,7 @@ export function bootDefense(app: Application): DefenseHandle {
     },
     cancelPlace,
     airstrike: () => !!battle && battle.crystals >= AIRSTRIKE_COST && battle.callAirstrike(),
+    buyCruiser: () => !!battle && battle.buyCruiser(),
     upgrade: (id, stat) => !!battle && battle.upgrade(id, stat),
     sell: (id) => {
       if (!battle?.sell(id)) return false;
@@ -342,10 +363,17 @@ export function bootDefense(app: Application): DefenseHandle {
       return { ...info, anchorX: scene.bufferToCss(top.x), anchorY: scene.bufferToCss(top.y) };
     },
     deselect: () => select(null),
+    selectById: (id) => {
+      if (battle?.structureInfo(id)) {
+        cancelPlace();
+        select(id);
+      }
+    },
     previewRange: (on) => {
       if (battle) battle.rangePreview = on;
     },
     startWaves: () => battle?.startWaves(),
+    nextWave: () => battle?.callNextWave() ?? -1,
     onSelect: (fn) => selectHooks.push(fn),
     structureRect: (kind) => {
       const s = battle?.structures.find((o) => o.kind === kind);

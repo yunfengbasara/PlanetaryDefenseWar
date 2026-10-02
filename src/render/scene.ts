@@ -4,12 +4,20 @@ import { PixelSurface } from './pixelSurface';
 import { PrimitiveMesh } from './primitiveMesh';
 import { ShapeBatch } from './shapeBatch';
 
-/** 一帧的三层：地面（不描边）、单位（描边）、特效（不描边，压在最上面）。 */
+/**
+ * 一帧的五层，从下往上：地面（不描边）、单位（描边）、特效（不描边）、天空（描边：巨舰、炮艇、炸弹）、
+ * 天上的光（不描边）。天空那两层压在地面所有东西上面。
+ */
 export interface Layers {
   ground: ShapeBatch;
   units: ShapeBatch;
   fx: ShapeBatch;
+  sky: ShapeBatch;
+  skyFx: ShapeBatch;
 }
+
+/** 一套空的五层批次。 */
+export const newLayers = (): Layers => ({ ground: new ShapeBatch(), units: new ShapeBatch(), fx: new ShapeBatch(), sky: new ShapeBatch(), skyFx: new ShapeBatch() });
 
 /**
  * 只管 Pixi 那几件事：建缓冲、把批次刷进顶点数组、整像素对齐镜头。画什么由调用方给的
@@ -20,7 +28,9 @@ export class Scene {
   private readonly groundMesh = new PrimitiveMesh(160_000);
   private readonly unitMesh = new PrimitiveMesh(60_000);
   private readonly fxMesh = new PrimitiveMesh(20_000);
-  private readonly layers: Layers = { ground: new ShapeBatch(), units: new ShapeBatch(), fx: new ShapeBatch() };
+  private readonly skyMesh = new PrimitiveMesh(20_000);
+  private readonly skyFxMesh = new PrimitiveMesh(4_000);
+  private readonly layers: Layers = newLayers();
 
   readonly camera: Camera;
   private dpr = 1;
@@ -37,6 +47,8 @@ export class Scene {
     this.surface.ground.addChild(this.groundMesh.mesh);
     this.surface.units.addChild(this.unitMesh.mesh);
     this.surface.fx.addChild(this.fxMesh.mesh);
+    this.surface.sky.addChild(this.skyMesh.mesh);
+    this.surface.skyFx.addChild(this.skyFxMesh.mesh);
     this.root.addChild(this.surface.view);
     app.stage.addChild(this.root);
   }
@@ -75,17 +87,17 @@ export class Scene {
     cam.x = snapped.x + Math.round(shakeX * cam.grain) / cam.grain;
     cam.y = snapped.y + Math.round(shakeY * cam.grain) / cam.grain;
 
-    const { ground, units, fx } = this.layers;
-    this.groundMesh.begin();
-    this.unitMesh.begin();
-    this.fxMesh.begin();
+    const { ground, units, fx, sky, skyFx } = this.layers;
+    const w = this.surface.width;
+    const h = this.surface.height;
+    for (const m of [this.groundMesh, this.unitMesh, this.fxMesh, this.skyMesh, this.skyFxMesh]) m.begin();
     paint(this.layers, cam);
-    ground.flushToMesh(this.groundMesh, this.surface.width, this.surface.height);
-    units.flushToMesh(this.unitMesh, this.surface.width, this.surface.height);
-    fx.flushToMesh(this.fxMesh, this.surface.width, this.surface.height);
-    this.groundMesh.end();
-    this.unitMesh.end();
-    this.fxMesh.end();
+    ground.flushToMesh(this.groundMesh, w, h);
+    units.flushToMesh(this.unitMesh, w, h);
+    fx.flushToMesh(this.fxMesh, w, h);
+    sky.flushToMesh(this.skyMesh, w, h);
+    skyFx.flushToMesh(this.skyFxMesh, w, h);
+    for (const m of [this.groundMesh, this.unitMesh, this.fxMesh, this.skyMesh, this.skyFxMesh]) m.end();
     this.surface.render();
 
     cam.x = realX;

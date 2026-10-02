@@ -378,6 +378,44 @@ export const MENU_CSS = `
 .pdw-crystal b { min-width: 48px; font: 700 18px Consolas, monospace; color: #dff8ff; text-align: right; }
 .pdw-crystal em { font-style: normal; font-size: 12px; color: var(--muted); }
 
+/* ---------------------------------------------------------------- 波次面板（右上角，晶矿上面） */
+.pdw-wave {
+  width: 210px; padding: 8px 10px 9px; pointer-events: auto;
+  background: rgba(9, 14, 26, .86); border: 2px solid var(--line);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+.pdw-wave.hidden { display: none; }
+.pdw-wave-now { display: flex; align-items: baseline; gap: 8px; }
+.pdw-wave-now span { font-size: 11px; color: var(--muted); letter-spacing: 2px; }
+.pdw-wave-now b { font-size: 17px; letter-spacing: 2px; color: #fff; }
+.pdw-wave-now em { margin-left: auto; font: 700 12px Consolas, "Microsoft YaHei", monospace; font-style: normal; color: #e0909a; }
+.pdw-wave-next { display: flex; align-items: baseline; gap: 6px; margin-top: 4px; font-size: 11px; color: var(--muted); }
+.pdw-wave-next b { margin-left: auto; font: 700 16px Consolas, monospace; color: #ffc446; }
+.pdw-wave.soon .pdw-wave-next b { color: #ff6a5a; animation: pdw-blink .6s steps(2) infinite; }
+.pdw-wave-bar { height: 4px; margin: 5px 0 7px; background: #0b1020; }
+.pdw-wave-bar i { display: block; height: 100%; width: 100%; background: #ffc446; transition: width .2s linear; }
+.pdw-wave-call { width: 100%; height: 30px; justify-content: space-between; padding: 0 10px; font-size: 13px; letter-spacing: 2px; }
+.pdw-wave-call em { display: flex; align-items: center; gap: 3px; font: 700 12px Consolas, monospace; font-style: normal; color: #8fe6ff; letter-spacing: 0; }
+.pdw-wave-call em i { font-style: normal; }
+.pdw-wave-call svg { width: 11px; height: 11px; color: #5fd8e8; }
+
+/* ---------------------------------------------------------------- "第 N 波来袭" */
+.pdw-banner {
+  position: absolute; left: 50%; top: 14%; z-index: 6; pointer-events: none;
+  transform: translateX(-50%); text-align: center; color: #fff;
+  font: 14px/1.3 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+}
+.pdw-banner.hidden { display: none; }
+.pdw-banner small { display: block; font: 700 12px Consolas, monospace; letter-spacing: 6px; color: #ff6a5a; }
+.pdw-banner b { display: block; font-size: 30px; letter-spacing: 8px; text-shadow: 2px 2px 0 #4a0e14, 0 0 18px rgba(255, 90, 80, .6); }
+.pdw-banner.show { animation: pdw-banner 2.2s ease-out forwards; }
+@keyframes pdw-banner {
+  0% { opacity: 0; transform: translate(-50%, -8px) scale(1.2); }
+  12% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 /* ---------------------------------------------------------------- 失败结算 */
 .pdw-over {
   position: absolute; inset: 0; z-index: 10; display: grid; place-items: center;
@@ -387,14 +425,14 @@ export const MENU_CSS = `
 }
 .pdw-over.hidden { display: none; }
 .pdw-over-panel {
-  position: relative; width: 380px; padding: 22px 26px 20px; text-align: center;
+  position: relative; width: 440px; padding: 22px 26px 20px; text-align: center;
   background: rgba(9, 14, 26, .94); border: 2px solid #8a2a34;
   clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
 }
 .pdw-over-panel::before { content: ""; position: absolute; left: 0; top: 0; width: 80px; height: 3px; background: #e0505a; }
 .pdw-over-panel small { font: 700 11px Consolas, monospace; letter-spacing: 4px; color: #e0505a; }
 .pdw-over-panel h2 { margin: 4px 0 16px; font-size: 26px; letter-spacing: 6px; color: #fff; text-shadow: 2px 2px 0 #4a0e14; }
-.pdw-over-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 18px; }
+.pdw-over-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 18px; }
 .pdw-over-stats div { display: flex; flex-direction: column; gap: 2px; padding: 8px; background: rgba(20, 30, 52, .6); border-left: 2px solid var(--line-hi); }
 .pdw-over-stats span { font-size: 11px; color: var(--muted); }
 .pdw-over-stats b { font: 700 20px Consolas, monospace; }
@@ -423,6 +461,7 @@ export const MENU_CSS = `
 .pdw-build-text b { font-size: 13px; letter-spacing: 1px; white-space: nowrap; }
 .pdw-build-text span { display: flex; align-items: center; gap: 3px; font: 700 12px Consolas, monospace; color: #8fe6ff; }
 .pdw-build-text svg { width: 11px; height: 11px; color: #5fd8e8; }
+.pdw-build-text i { font-style: normal; }
 .pdw-build-item kbd {
   position: absolute; right: 6px; top: 4px; font: 700 10px Consolas, monospace; color: var(--dim);
 }

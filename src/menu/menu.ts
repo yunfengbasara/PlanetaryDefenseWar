@@ -1,6 +1,7 @@
 import type { Application } from 'pixi.js';
 import { BUG_LOOKS, type BugKind, drawBug } from '../game/bugs';
 import { field, useField } from '../game/fields';
+import { ARM, CROSS_C } from '../game/crossmap';
 import { LANE_CX, drawFloor } from '../game/floor';
 import { LINE_Y } from '../game/scene';
 import { Projection } from '../render/projection';
@@ -296,6 +297,16 @@ export class MainMenu {
       if (m.locked) continue;
       // 地板画法和通道宽窄都读当前战场：临时切过去画，画完切回来。
       useField(m.field);
+      // 十字高地：框住整个十字；别的图是从敌人压过来的地方看到后方核心。
+      if (field().layout === 'cross') {
+        cam.grain = cam.grainToFit(ARM * 2 + 40, ARM * 2 + 40, 4);
+        cam.x = CROSS_C.x;
+        cam.y = CROSS_C.y - 14;
+      } else {
+        cam.grain = cam.grainToFit(700, y1 - y0 + lift, 4);
+        cam.x = LANE_CX + 25;
+        cam.y = (y0 + y1) / 2 - lift / 2;
+      }
       const src = this.snap.capture(cam, (layers, c) => drawFloor(layers.ground, c, 0));
       const big = document.createElement('canvas');
       big.width = PREVIEW_W;

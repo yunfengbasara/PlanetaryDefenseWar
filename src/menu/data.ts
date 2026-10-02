@@ -66,7 +66,7 @@ export const MAPS: MapInfo[] = [
       { text: '你有 200 晶矿。点击这里的「兵营」（或按数字键 1）。', wait: 'placing-barracks', target: 'build:barracks' },
       { text: '把兵营移到亮出来的基地空地上：绿色表示可以建造，红色不行。左键放下，右键或 Esc 取消。', wait: 'built-barracks', target: 'area:base' },
       { text: '选中兵营，在亮出的范围里右键点地面，设置集结点。', wait: 'rally', target: 'rally:barracks' },
-      { text: '兵营会自动出兵，点击建筑可以升级。打死虫子能获得晶矿，用来造更多建筑或呼叫轰炸支援。守住水晶核心！' },
+      { text: '兵营会自动出兵，点击建筑可以升级。打死虫子能获得晶矿；右上角的「下一波」可以提前叫虫，多拿晶矿。守住水晶核心！' },
     ],
   },
   {
@@ -94,7 +94,7 @@ export const MAPS: MapInfo[] = [
     code: 'RED SAND CANYON',
     locked: false,
     difficulty: 4,
-    desc: '一颗干旱行星上的峡谷要道。通道更宽，虫群里甲虫和喷酸虫明显更多；防线前垒了一排沙袋，后方的水泥地坪上停着整支守备部队。',
+    desc: '一颗干旱行星上的峡谷要道。通道更宽，虫群里甲虫和喷酸虫明显更多；防线前垒了一排沙袋，后方是一片可以建造的水泥地坪。',
     stats: [
       { label: '战区类型', value: '地表防御' },
       { label: '敌群规模', value: '无尽' },
@@ -128,7 +128,7 @@ export const MAPS: MapInfo[] = [
     code: 'FROST OUTPOST',
     locked: false,
     difficulty: 4,
-    desc: '暴风雪里的一座极地前哨。通道两侧是冰棱和雪堆，刺蛇在冻土下格外活跃；暴雪挡住了轨道支援，这一仗没有巡航舰。',
+    desc: '暴风雪里的一座极地前哨。通道两侧是冰棱和雪堆，刺蛇在冻土下格外活跃；暴雪挡住了轨道支援，这一仗呼叫不了巨舰。',
     stats: [
       { label: '战区类型', value: '极地防御' },
       { label: '敌群规模', value: '无尽' },
@@ -170,6 +170,23 @@ export const MAPS: MapInfo[] = [
       { label: '首通奖励', value: '2,800' },
     ],
     enemies: enemies('crawler', 'flyer', 'hopper', 'spitter', 'beetle', 'serpent'),
+  },
+  {
+    id: 'cross-highland',
+    field: 'cross-highland',
+    index: '07',
+    name: '十字高地',
+    code: 'CROSSROAD HIGHLAND',
+    locked: false,
+    difficulty: 4,
+    desc: '水晶核心坐镇正中的高台，上下左右四条路直通高台的坡道，虫群从四个方向同时涌来。在高台上建好据点，把兵力分派到四个路口。',
+    stats: [
+      { label: '战区类型', value: '四面防守' },
+      { label: '初始晶矿', value: '500' },
+      { label: '推荐时长', value: '8 分钟' },
+      { label: '首通奖励', value: '3,000' },
+    ],
+    enemies: enemies('crawler', 'hopper', 'beetle', 'flyer'),
   },
 ];
 

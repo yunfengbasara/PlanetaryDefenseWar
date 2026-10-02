@@ -17,7 +17,7 @@ import { Camera } from '../src/render/camera';
 import { type Rgba } from '../src/render/color';
 import { ellipseSegments, unitCircle } from '../src/render/ellipseFan';
 import { ShapeBatch, type PrimitiveSink } from '../src/render/shapeBatch';
-import type { Layers } from '../src/render/scene';
+import { type Layers, newLayers } from '../src/render/scene';
 import { Mesh3, drawMesh, drawShadow } from '../src/mesh/mesh';
 import { aaTurret, barracks, battlecruiser, commandCenter, gunship, siegeTank, walkerMech } from '../src/mesh/models';
 import { DefenseScene, LINE_Y } from '../src/game/scene';
@@ -281,16 +281,23 @@ function sheet(cells: Canvas[], columns: number, pad = 2): Canvas {
   return out;
 }
 
-/** 三层合成：地面 → 描边的单位层 → 不描边的特效层。和 PixelSurface.render 同一个顺序。 */
+/**
+ * 五层合成：地面 → 描边的单位层 → 不描边的特效层 → 描边的天空层 → 天上的光。
+ * 和 PixelSurface.render 同一个顺序。
+ */
 function layered(cam: Camera, paint: (layers: Layers) => void, w = W, h = H): Canvas {
-  const layers: Layers = { ground: new ShapeBatch(), units: new ShapeBatch(), fx: new ShapeBatch() };
+  const layers = newLayers();
   paint(layers);
   const g = new Canvas(w, h, [7, 9, 15, 255]);
   const u = new Canvas(w, h);
   flush(layers.ground, g);
   flush(layers.units, u);
-  const out = composite(g, u);
+  let out = composite(g, u);
   flush(layers.fx, out);
+  const sky = new Canvas(w, h);
+  flush(layers.sky, sky);
+  out = composite(out, sky);
+  flush(layers.skyFx, out);
   return out;
 }
 
@@ -335,8 +342,37 @@ function layered(cam: Camera, paint: (layers: Layers) => void, w = W, h = H): Ca
 
 // ---------------------------------------------------------------- 战场
 
+/**
+ * 摆好一局：开局是空地图，这里直接用场景接口造两座兵营、一座车间、两辆坦克、一门火炮，把兵营和车间的
+ * 数量升满，买巨舰，然后开打（连叫几波）。兵营一个个出兵，大约四十秒后防线成形。
+ */
+function setupBattle(): DefenseScene {
+  const b = new DefenseScene();
+  b.crystals = 1e6;
+  const built = [
+    b.place('barracks', 240, 660),
+    b.place('barracks', 420, 650),
+    b.place('factory', 450, 770),
+    b.place('tank', 200, 570),
+    b.place('tank', 460, 570),
+    b.place('artillery', 130, 610),
+  ];
+  for (const s of built) {
+    if (!s) throw new Error('preview: 摆建筑失败（位置放不下）');
+    if (s.kind === 'barracks' || s.kind === 'factory') {
+      b.upgrade(s.id, 'count');
+      b.upgrade(s.id, 'count');
+    }
+  }
+  b.buyCruiser();
+  b.startWaves();
+  // 连叫几波，场上一开始就有足够的虫可拍。
+  for (let i = 0; i < 6; i++) b.callNextWave();
+  return b;
+}
+
 {
-  const battle = new DefenseScene();
+  const battle = setupBattle();
   const cam = new Camera();
   cam.viewWidth = W;
   cam.viewHeight = H;
@@ -345,7 +381,7 @@ function layered(cam: Camera, paint: (layers: Layers) => void, w = W, h = H): Ca
   cam.y = (175 + LINE_Y + 265) / 2 - 10;
   const frame = (): Canvas => layered(cam, (layers) => battle.draw(layers, cam));
   const cells: Canvas[] = [];
-  for (const t of [2, 5.4, 6.2, 9]) {
+  for (const t of [40, 44, 48, 52]) {
     while (battle.time < t) battle.update(1 / 60);
     cells.push(frame());
   }
@@ -355,20 +391,20 @@ function layered(cam: Camera, paint: (layers: Layers) => void, w = W, h = H): Ca
   close.viewWidth = W;
   close.viewHeight = H;
   close.grain = 3.2;
-  close.x = 190;
+  close.x = 300;
   close.y = LINE_Y + 20;
   writePng('.preview-defense-close.png', layered(close, (layers) => battle.draw(layers, close)).upscale(2));
-  // 补兵：跑到有人倒下、兵营正在往前线送人的时候，拍防线到兵营这一段。
+  // 出兵：跑到兵营正升着门、新兵刚走出门口的时候，拍兵营这一段。
   {
-    const b2 = new DefenseScene() as DefenseScene & { walkers: unknown[] };
-    while (b2.time < 25 || (b2.walkers.length === 0 && b2.time < 90)) b2.update(1 / 60);
-    for (let k = 0; k < 90; k++) b2.update(1 / 60);
+    const b2 = setupBattle();
+    const walkingOut = (): boolean => b2.defenders.some((d) => d.kind === 'rifle' && (d.path?.length ?? 0) > 0 && d.y > LINE_Y + 120);
+    while (b2.time < 6 || (!walkingOut() && b2.time < 60)) b2.update(1 / 60);
     const mid = new Camera();
     mid.viewWidth = W;
     mid.viewHeight = H;
     mid.grain = 1.9;
-    mid.x = 250;
-    mid.y = LINE_Y + 110;
+    mid.x = 300;
+    mid.y = LINE_Y + 150;
     writePng('.preview-defense-reinforce.png', layered(mid, (layers) => b2.draw(layers, mid)).upscale(2));
   }
   // 交火特写：防线前方，看子弹在飞、火星、枪口焰。多拍几帧挑子弹多的瞬间。

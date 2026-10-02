@@ -25,13 +25,11 @@ createApp().then((app) => {
     tip.open(null);
     game.start(map.field);
     hud.show();
-    const st = game.state();
-    if (st?.build) build.show();
-    else build.hide();
+    build.show();
     back.classList.remove('hidden');
-    // 有引导就跟着引导走，走完 / 跳过才开始刷怪；没有引导的建造模式直接开打。
+    // 有引导就跟着引导走，走完 / 跳过才开始刷怪；别的地图直接开打。
     if (map.hints) hints.play(map.hints, () => game.startWaves());
-    else if (st?.build) game.startWaves();
+    else game.startWaves();
   };
   const quit = (): void => {
     current = null;
@@ -47,6 +45,7 @@ createApp().then((app) => {
   const hud = new Hud(stage, {
     restart: () => current && play(current),
     quit,
+    nextWave: () => game.nextWave(),
   });
   const build = new BuildPanel(app, game);
   hud.attach(build.el);
@@ -64,7 +63,7 @@ createApp().then((app) => {
       if (t === 'rally:barracks') return game.rallyAreaRect('barracks');
       return game.structureRect('barracks');
     });
-    hud.update(st);
+    hud.update(st, dt);
     build.update(st);
     tip.update(st);
   });

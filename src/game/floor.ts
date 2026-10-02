@@ -3,9 +3,10 @@ import type { Camera } from '../render/camera';
 import { type Rgba, lerpColor, rgb, rgba } from '../render/color';
 import { Projection } from '../render/projection';
 import type { ShapeBatch } from '../render/shapeBatch';
+import { CROSS_C, drawCross } from './crossmap';
 import { drawStarship } from './starship';
 import { drawSurface } from './surface';
-import { field } from './fields';
+import { field, onFieldChange } from './fields';
 
 /**
  * 太空平台：一条悬在深空里的金属通道，前面窄、后面的炮位区宽一些。两侧是虚空。
@@ -28,6 +29,12 @@ export const T = 20;
 
 /** 水晶核心的位置：兵营和指挥中心中间、地图中轴上（scene.ts 管它的逻辑，地形有的要围着它画）。 */
 export const CORE = v2(LANE_CX, 700);
+// 十字高地的核心在地图正中；换战场时把 CORE 挪过去（大家都直接读 CORE.x / CORE.y）。
+onFieldChange(() => {
+  const c = field().layout === 'cross' ? CROSS_C : v2(LANE_CX, 700);
+  CORE.x = c.x;
+  CORE.y = c.y;
+});
 
 /** 某一行通道的左右边界：前方是当前战场的 narrow，过了 WIDEN_Y 放宽到 wide。 */
 export function spanAt(y: number): [number, number] {
@@ -148,6 +155,10 @@ export function hazard(s: ShapeBatch, cam: Camera, x0: number, y0: number, x1: n
 }
 
 export function drawFloor(s: ShapeBatch, cam: Camera, time: number): void {
+  if (field().layout === 'cross') {
+    drawCross(s, cam, time);
+    return;
+  }
   if (field().theme === 'starship') {
     drawStarship(s, cam, time);
     return;

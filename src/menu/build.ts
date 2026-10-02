@@ -1,6 +1,6 @@
 import type { Application } from 'pixi.js';
 import { v2 } from '../core/math';
-import { AIRSTRIKE_COST, BUILDS, BUILD_ORDER, type BuildKind, type StatKey, airstrikeMesh, buildingMesh } from '../game/buildings';
+import { AIRSTRIKE_COST, BUILDS, BUILD_ORDER, CRUISER_COST, CRUISER_ID, type BuildKind, type StatKey, airstrikeMesh, buildingMesh, cruiserMesh } from '../game/buildings';
 import type { BattleState, DefenseHandle } from '../game/main';
 import { drawMesh, drawShadow } from '../mesh/mesh';
 import type { Mesh3 } from '../mesh/mesh';
@@ -10,8 +10,9 @@ import { Snapshotter } from '../render/snapshot';
 /**
  * 建造模式的两块界面：
  *
- *   BuildPanel   右上角晶矿下面一列：兵营、机器人车间、坦克、火炮、轰炸支援。缩略图用游戏自己的
- *                模型现画。点一下进入放置模式（再点一下取消）；数字键 1~5 是快捷键。钱不够的项变暗。
+ *   BuildPanel   右上角晶矿下面一列：兵营、机器人车间、坦克、火炮、巨舰、轰炸支援。缩略图用游戏自己的
+ *                模型现画。建筑点一下进入放置模式（再点一下取消）；巨舰一局买一次（买了显示"已部署"）；
+ *                数字键 1~6 是快捷键。钱不够的项变暗。
  *   UpgradeTip   点了地图上的建筑后，在它头顶弹出的小面板：产量、每条升级线（数量 / 攻击力 / 射程 / 射速）
  *                的等级、当前 → 下一级的数值、升级按钮。面板跟着建筑走（镜头动了也对得上）。
  *                骨架只搭一次，之后每帧只改变了的文字 —— 整块重写会打断鼠标悬停，按钮会闪。
@@ -22,10 +23,19 @@ import { Snapshotter } from '../render/snapshot';
 const CRYSTAL =
   '<svg viewBox="0 0 16 16"><path d="M8 1l5 5-5 9-5-9z" fill="currentColor"/><path d="M8 1l2 5-2 9z" fill="#fff" opacity=".35"/></svg>';
 
-type Item = BuildKind | 'airstrike';
-const ITEMS: Item[] = [...BUILD_ORDER, 'airstrike'];
+type Item = BuildKind | 'cruiser' | 'airstrike';
+const ITEMS: Item[] = [...BUILD_ORDER, 'cruiser', 'airstrike'];
+
+const ITEM_NAME: Record<'cruiser' | 'airstrike', string> = { cruiser: '巨舰', airstrike: '轰炸支援' };
+const ITEM_DESC: Record<'cruiser' | 'airstrike', string> = {
+  cruiser: '战列巡航舰：一局一艘，飞到战场旁边待命，隔一阵开一发主炮',
+  airstrike: '花晶矿叫一组炮艇，沿虫最多的地方投弹',
+};
+const itemCost = (item: Item): number => (item === 'airstrike' ? AIRSTRIKE_COST : item === 'cruiser' ? CRUISER_COST : BUILDS[item].cost);
 
 const THUMB_W = 56;
+/** 右上角那一列（波次面板、晶矿、建造列表）占多宽（CSS 像素）：升级面板别压上去。 */
+const RIGHT_COLUMN = 230;
 const THUMB_H = 44;
 
 export class BuildPanel {
@@ -39,10 +49,10 @@ export class BuildPanel {
     ITEMS.forEach((item, i) => {
       const b = document.createElement('button');
       b.className = 'pdw-build-item';
-      const name = item === 'airstrike' ? '轰炸支援' : BUILDS[item].name;
-      const cost = item === 'airstrike' ? AIRSTRIKE_COST : BUILDS[item].cost;
-      b.title = item === 'airstrike' ? '花晶矿叫一组炮艇，沿虫最多的那一列投弹' : BUILDS[item].desc;
-      b.innerHTML = `<kbd>${i + 1}</kbd><div class="pdw-build-text"><b>${name}</b><span>${CRYSTAL}${cost}</span></div>`;
+      const special = item === 'airstrike' || item === 'cruiser';
+      const name = special ? ITEM_NAME[item] : BUILDS[item].name;
+      b.title = special ? ITEM_DESC[item] : BUILDS[item].desc;
+      b.innerHTML = `<kbd>${i + 1}</kbd><div class="pdw-build-text"><b>${name}</b><span>${CRYSTAL}<i data-f="cost">${itemCost(item)}</i></span></div>`;
       b.prepend(thumb(snap, item));
       b.addEventListener('click', () => this.pick(item));
       this.buttons.set(item, b);
@@ -69,9 +79,17 @@ export class BuildPanel {
   update(st: BattleState | null): void {
     if (!this.visible || !st?.build) return;
     for (const [item, b] of this.buttons) {
-      const cost = item === 'airstrike' ? AIRSTRIKE_COST : BUILDS[item].cost;
-      b.classList.toggle('off', st.crystals < cost || st.lost);
+      const cost = itemCost(item);
+      // 巨舰：这张图不能买就一直暗着；买过了就亮着（点它选中巨舰），价钱那里写"已部署"。
+      const bought = item === 'cruiser' && st.build.cruiser === 'bought';
+      const none = item === 'cruiser' && st.build.cruiser === 'none';
+      b.classList.toggle('off', none || st.lost || (!bought && st.crystals < cost));
       b.classList.toggle('active', st.build.placing === item);
+      if (item === 'cruiser') {
+        const label = st.build.cruiser === 'bought' ? '已部署' : st.build.cruiser === 'none' ? '本战区不可用' : `${cost}`;
+        const el = b.querySelector('[data-f=cost]')!;
+        if (el.textContent !== label) el.textContent = label;
+      }
     }
   }
 
@@ -88,6 +106,11 @@ export class BuildPanel {
       this.game.airstrike();
       return;
     }
+    if (item === 'cruiser') {
+      // 已经部署了：点这一项就选中巨舰（它常常在画面边上，不好点）。
+      if (!this.game.buyCruiser()) this.game.selectById(CRUISER_ID);
+      return;
+    }
     if (this.buttons.get(item)!.classList.contains('active')) this.game.cancelPlace();
     else this.game.beginPlace(item);
   }
@@ -95,15 +118,15 @@ export class BuildPanel {
 
 /** 一个建筑（或炮艇）的缩略图：透明底，模型居中，竖着高的东西往上挪一点。 */
 function thumb(snap: Snapshotter, item: Item): HTMLCanvasElement {
-  const grain = { barracks: 0.72, factory: 0.56, tank: 0.78, artillery: 1.2, airstrike: 0.85 }[item];
-  const top = item === 'airstrike' ? 0 : BUILDS[item].top;
+  const grain = { barracks: 0.72, factory: 0.56, tank: 0.78, artillery: 1.2, cruiser: 0.62, airstrike: 0.85 }[item];
+  const top = item === 'airstrike' || item === 'cruiser' ? 0 : BUILDS[item].top;
   const cam = snap.camera(THUMB_W, THUMB_H);
   cam.grain = grain;
   cam.x = 0;
   cam.y = -((top * Projection.heightSquash) / Projection.groundSquash) / 2;
-  const mesh: Mesh3 = item === 'airstrike' ? airstrikeMesh() : buildingMesh(item, 0, 0, 0.6, 0);
+  const mesh: Mesh3 = item === 'airstrike' ? airstrikeMesh() : item === 'cruiser' ? cruiserMesh() : buildingMesh(item, 0, 0, 0.6, 0);
   const src = snap.capture(cam, (layers, c) => {
-    if (item !== 'airstrike') drawShadow(layers.ground, c, mesh, 0, 9e5, 70);
+    if (item !== 'airstrike' && item !== 'cruiser') drawShadow(layers.ground, c, mesh, 0, 9e5, 70);
     drawMesh(layers.units, c, mesh, v2(0, 0));
   });
   const out = document.createElement('canvas');
@@ -163,7 +186,9 @@ export class UpgradeTip {
     const prod = d.unit
       ? `<div class="pdw-tip-prod"><span>${d.unit}</span><b data-f="count"></b><em data-f="state"></em></div>
          <div class="pdw-tip-hint">右键点击地面设置集结点</div>`
-      : '';
+      : kind === 'cruiser'
+        ? '<div class="pdw-tip-hint">右键点击地面移动巨舰</div>'
+        : '';
     const rows = d.stats
       .map(
         (st) => `
@@ -200,8 +225,15 @@ export class UpgradeTip {
       return;
     }
     if (this.builtFor !== `${s.id}`) this.build(s.id, s.kind);
-    this.el.style.left = `${Math.round(s.anchorX)}px`;
-    this.el.style.top = `${Math.round(s.anchorY)}px`;
+    // 面板夹在舞台里，并且让开右边那一列（波次、晶矿、建造列表）：靠右的建筑和巨舰，面板往左挪。
+    const host = this.el.parentElement!;
+    const w = this.el.offsetWidth;
+    const h = this.el.offsetHeight;
+    const right = host.clientWidth - RIGHT_COLUMN - 8;
+    const x = Math.min(right - w / 2, Math.max(w / 2 + 8, s.anchorX));
+    const y = Math.max(h + 8, Math.min(host.clientHeight - 8, s.anchorY));
+    this.el.style.left = `${Math.round(x)}px`;
+    this.el.style.top = `${Math.round(y)}px`;
     const count = this.el.querySelector('[data-f=count]');
     if (count) {
       setText(count, `${s.count} / ${s.cap}`);
@@ -210,6 +242,8 @@ export class UpgradeTip {
       setText(state, full ? '已满' : s.blocked ? '防线站满' : `生产中 ${Math.floor(s.prog * 100)}%`);
       state.className = full ? 'ok' : s.blocked ? 'warn' : '';
     }
+    // 巨舰不能卖（refund < 0）：整行藏起来。
+    (this.el.querySelector('.pdw-tip-foot') as HTMLElement).style.display = s.refund < 0 ? 'none' : '';
     const armed = performance.now() - this.sellArmed < 2000;
     setText(this.el.querySelector('[data-f=sell]')!, armed ? `确认出售？+${s.refund}` : `出售 +${s.refund}`);
     this.el.querySelector('.pdw-tip-sell')!.classList.toggle('armed', armed);

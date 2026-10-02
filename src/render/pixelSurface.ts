@@ -32,6 +32,13 @@ export class PixelSurface {
    * 这些东西本身就是"光"或"雾"，描上一圈暗边就成了贴纸。
    */
   readonly fx = new Container();
+  /**
+   * 天上的东西（巨舰、炮艇、炸弹）：和 units 一样整层描一圈暗边，但合成在 fx 之后 ——
+   * 地面上的一切（单位、血条、子弹、炮火、爆炸）都被它们盖住。
+   */
+  readonly sky = new Container();
+  /** 天上的光（巨舰的引擎尾焰、主炮蓄能、光弹，炮艇尾焰）：不描边，压在最上面。 */
+  readonly skyFx = new Container();
 
   /** 像素缓冲的尺寸，也是世界坐标的可视范围。 */
   width = 0;
@@ -109,12 +116,15 @@ export class PixelSurface {
     this.view.scale.set(this.pixelScale / dpr);
   }
 
-  /** 画一帧：地面 → 人物层 → 带描边合成回底图。 */
+  /** 画一帧：地面 → 人物层（带描边）→ 特效 → 天空层（带描边，复用同一张描边缓冲）→ 天上的光。 */
   render(): void {
     this.renderer.render({ container: this.ground, target: this.base, clear: true });
     this.renderer.render({ container: this.units, target: this.layer, clear: true });
     this.renderer.render({ container: this.composite, target: this.base, clear: false });
     this.renderer.render({ container: this.fx, target: this.base, clear: false });
+    this.renderer.render({ container: this.sky, target: this.layer, clear: true });
+    this.renderer.render({ container: this.composite, target: this.base, clear: false });
+    this.renderer.render({ container: this.skyFx, target: this.base, clear: false });
     this.view.texture = this.base;
   }
 

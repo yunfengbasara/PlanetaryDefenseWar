@@ -4,7 +4,7 @@ import { type Kit, makeKit } from '../characters/kit';
 import { drawMarine } from '../characters/renderer';
 import { Pose, RigSpec } from '../characters/rig';
 import { Mesh3, drawMesh, drawShadow } from '../mesh/mesh';
-import { LIVERY_BLUE, aaTurret, barracks, battlecruiser, bomb, commandCenter, crystalCore, gunship, siegeTank, walkerMech } from '../mesh/models';
+import { LIVERY_BLUE, aaTurret, battlecruiser, bomb, crystalCore, gunship, siegeTank, walkerMech } from '../mesh/models';
 import type { Camera } from '../render/camera';
 import { type Rgba, lerpColor, rgb, rgba } from '../render/color';
 import { Projection } from '../render/projection';
@@ -13,7 +13,8 @@ import { Projector } from '../render/projector';
 import type { Layers } from '../render/scene';
 import { fallPose, strideCycle, walkPose } from '../characters/poses';
 import { CORE, END_Y, LANE_CX, TOP_Y, drawFloor, spanAt } from './floor';
-import { AIRSTRIKE_COST, BUILDS, type BuildKind, type StatKey, buildingMesh, statDef } from './buildings';
+import { AIRSTRIKE_COST, BUILDS, CRUISER_COST, CRUISER_ID, CRUISER_RANGE, type BuildKind, type StatKey, buildingMesh, statDef } from './buildings';
+import { CROSS_C, PLAT, crossBlocks, crossClamp, crossRampTops, crossRowSpan, crossSpawn, crossWalkable } from './crossmap';
 import { PlatformGround } from './ground';
 import { type FieldDef, field } from './fields';
 import { BUG_LOOKS, BUG_SIZE, type BugKind, type BugLook, type SplatBlob, drawBug, drawSplat, makeSplat } from './bugs';
@@ -64,6 +65,9 @@ const MARINE_HP = 30;
 const MECH_HP = 60;
 /** 漏过防线的虫往多远以内的建筑 / 机甲扑（再远就直奔核心）。 */
 const PREY_RANGE = 150;
+
+/** 巨舰挪位置时的最高航速（非常慢）。 */
+const CRUISER_CRUISE = 8;
 /** 碰撞半径：机枪兵、机甲（建造模式里单位之间、单位和建筑之间互相推开）。 */
 const RIFLE_R = 6;
 const MECH_R = 14;
@@ -73,13 +77,21 @@ const SELL_REFUND = 0.7;
 export const RALLY_MAX = 220;
 /** 走路的单位离终点这么近、又被挡住了，就当作到了（不去挤开占着位置的东西）。 */
 const ARRIVE_NEAR = 30;
+/**
+ * 波次（占位数值）：开局准备多久、两波之间隔多久、第 n 波多少只（乘地图的 waveScale）、一波的虫多快刷出来、
+ * 提前叫下一波时每剩一秒奖励多少晶矿。
+ */
+const WAVE_PREP = 20;
+const WAVE_GAP = 30;
+const waveSize = (n: number, scale: number): number => Math.max(1, Math.round((6 + 5 * (n - 1)) * scale));
+const WAVE_PACE = 3;
+const EARLY_BONUS = 3;
 /** 血条分几格。 */
 const HP_PIPS = 5;
 const BITE: Partial<Record<BugKind, number>> = { crawler: 1, hopper: 2, beetle: 3 };
 const SPIKE_DMG = 4;
 const ACID_DMG = 2;
 /** 兵营造一个兵的时间、新兵走路的速度、尸体躺多久。 */
-const BUILD_TIME = 3;
 const WALK_SPEED = 30;
 /** 建造模式：机甲默认的集结线、建筑最靠前能放到哪儿。 */
 const PATROL_Y = LINE_Y + 38;
@@ -90,9 +102,6 @@ const WALK_CYCLE = strideCycle(WALK_GAIT) * MARINE_SCALE;
 const CORPSE_TIME = 7;
 /** 战列巡航舰比模型原尺寸再大一圈：它得是场上最大的东西。 */
 const CRUISER_SCALE = 1.4;
-/** 后方的两座建筑：兵营在左、指挥中心在右，正面朝镜头。 */
-const BARRACKS = v2(LANE_CX - 118, 690);
-const BASE_CC = v2(LANE_CX + 96, 694);
 
 /**
  * 水晶核心：兵营和指挥中心中间、地图中轴上。突破防线的虫子会冲过来撞它，血打空这一局就输了。
@@ -253,17 +262,6 @@ interface Defender {
   reroutes?: number;
 }
 
-/** 从兵营走向空缺站位的新兵。 */
-interface Walker {
-  slot: Defender;
-  x: number;
-  y: number;
-  path: Vec2[];
-  phase: number;
-  heading: number;
-  pose: Pose;
-}
-
 interface Gun {
   kind: 'tank' | 'aa';
   x: number;
@@ -277,8 +275,6 @@ interface Gun {
   target: Bug | null;
   /** 坦克：多久之后才重新挑目标。 */
   retarget: number;
-  /** 等级（自动地图里恒为 1；建造模式的加成看 owner 的升级）。 */
-  level: number;
   /** 建造模式：这门炮属于哪座建筑。 */
   owner?: Structure;
 }
@@ -455,6 +451,11 @@ interface Cruiser {
   recoil: number;
   t: number;
   target: Bug | null;
+  /** 待命位置：建造模式买下后从画面外飞过来，飞到了才开始打；右键挪位置也是改这里。 */
+  hx: number;
+  hy: number;
+  /** 挪位置时的航速（慢慢加速、慢慢减速）。 */
+  vel: number;
 }
 
 /** 主炮的光弹。 */
@@ -463,6 +464,8 @@ interface Bolt {
   to: Vec3;
   t: number;
   dur: number;
+  /** 威力倍率（巨舰攻击力升级）。 */
+  power: number;
 }
 
 /** 延时的连环爆炸：主炮落点周围一圈接一圈地炸开。 */
@@ -471,6 +474,7 @@ interface Blast {
   y: number;
   t: number;
   size: number;
+  power: number;
 }
 
 interface Plane {
@@ -478,6 +482,9 @@ interface Plane {
   y: number;
   z: number;
   dropCd: number;
+  /** 在哪一段 y 里投弹（默认是防线前到地图顶；十字高地的轰炸支援只炸虫最密的那一小段）。 */
+  dropY0?: number;
+  dropY1?: number;
 }
 
 interface Bomb {
@@ -562,7 +569,30 @@ export class DefenseScene {
   readonly missiles: Missile[] = [];
   readonly shells: Shell[] = [];
   readonly planes: Plane[] = [];
-  readonly cruiser: Cruiser = { x: LANE_CX + 320, y: 500, z: 22, yaw: -2.2, spin: 0, lock: null, cd: 6, charge: 0, recoil: 0, t: 0, target: null };
+  readonly cruiser: Cruiser = { x: LANE_CX + 320, y: 500, z: 22, yaw: -2.2, spin: 0, lock: null, cd: 6, charge: 0, recoil: 0, t: 0, target: null, hx: LANE_CX + 320, hy: 500, vel: 0 };
+  /** 巨舰买了没有。 */
+  cruiserBought = false;
+  /** 巨舰的升级线、花费（借用建筑的结构，升级面板、加成都按建筑那一套算；不在 structures 里）。 */
+  readonly cruiserS: Structure = {
+    id: CRUISER_ID,
+    kind: 'cruiser',
+    x: 0,
+    y: 0,
+    up: { count: 1, speed: 1, dmg: 1, range: 1, rate: 1 },
+    prog: 0,
+    door: 0,
+    doorWant: 0,
+    doorHold: 0,
+    exitReady: false,
+    gun: null,
+    flash: 0,
+    hp: 9999,
+    hit: 0,
+    rally: v2(0, 0),
+    spent: CRUISER_COST,
+  };
+  /** 巨舰到过待命位置了没有：第一次飞进场是快的，之后右键挪位置是慢的。 */
+  private cruiserArrived = false;
   readonly bolts: Bolt[] = [];
   readonly blasts: Blast[] = [];
   readonly bombs: Bomb[] = [];
@@ -578,15 +608,15 @@ export class DefenseScene {
   lost = false;
   lostT = 0;
   private spawnAcc = 0;
-  private planeCd = 4;
 
-  /**
-   * 建造模式（新兵训练场）：开局地图是空的，只有核心；玩家用晶矿造兵营、车间、坦克、火炮。
-   * 不刷怪，直到 startWaves()（引导走完或者跳过）。
-   */
-  readonly buildMode: boolean = this.field.build ?? false;
-  /** 虫群开始进攻了没有。 */
-  waves = !this.buildMode;
+  /** 十字高地：虫从四个方向来，没有"防线"那一行；几何在 crossmap.ts。 */
+  readonly cross: boolean = this.field.layout === 'cross';
+  /** 虫群开始进攻了没有（外面调 startWaves()：引导走完 / 跳过，或者没有引导的地图一开局就调）。 */
+  waves = false;
+  /** 当前是第几波（0 = 第一波还没来）；离下一波还有几秒；还排着没刷出来的虫。 */
+  wave = 0;
+  nextIn = WAVE_PREP;
+  private pending = 0;
   readonly structures: Structure[] = [];
   ghost: Ghost | null = null;
   /** 当前选中（弹着升级面板）的建筑。 */
@@ -595,84 +625,18 @@ export class DefenseScene {
   rangePreview = false;
   private nextId = 1;
 
+  /**
+   * 开局：地图是空的，只有水晶核心和一笔晶矿；玩家自己造兵营、车间、坦克、火炮，买巨舰、叫轰炸。
+   */
   constructor() {
     this.fx.debrisColors = MOON_DEBRIS;
     this.fx.smokeLift = 45;
-    if (this.buildMode) {
-      this.crystals = this.field.startCrystals ?? 200;
-      return;
+    this.crystals = this.field.startCrystals;
+    if (this.cross) {
+      this.cruiser.hx = CROSS_C.x + 300;
+      this.cruiser.hy = CROSS_C.y - 240;
+      this.cruiser.yaw = 2.5;
     }
-
-    const blank = (): Omit<Defender, 'kind' | 'x' | 'y' | 'minX' | 'maxX'> => ({
-      z: 0,
-      cd: Math.random() * 1.2,
-      recoil: 0,
-      pose: new Pose(),
-      burst: 0,
-      yaw: 0,
-      target: null,
-      step: Math.random(),
-      side: 1,
-      missileCd: 1 + Math.random() * 2,
-      heading: Math.random() < 0.5 ? 0 : Math.PI,
-      dir: Math.random() < 0.5 ? 1 : -1,
-      pause: Math.random() * 2,
-      stride: 0,
-      hp: MARINE_HP,
-      deadT: -1,
-      slotX: 0,
-      slotY: 0,
-    });
-    // 机甲在步兵线后面来回踱步，各管半条防线。
-    // 巡逻范围跟着通道宽窄走：窄通道里两台机甲各管一小段。
-    const [mechA, mechB] = spanAt(LINE_Y + 38);
-    const reach = Math.min(160, (mechB - mechA) / 2 - 24);
-    for (const [minX, maxX] of [[LANE_CX - reach, LANE_CX - 20], [LANE_CX + 20, LANE_CX + reach]]) {
-      const x = minX + Math.random() * (maxX - minX);
-      this.defenders.push({ ...blank(), kind: 'mech', x, y: LINE_Y + 38, minX, maxX });
-    }
-    // 步兵：没有战壕，平地上一字排开。
-    const [lineA, lineB] = spanAt(LINE_Y);
-    for (let x = lineA + 22; x <= lineB - 22; x += 24) {
-      const mech = false;
-      this.defenders.push({
-        kind: mech ? 'mech' : 'rifle',
-        minX: x,
-        maxX: x,
-        heading: 0,
-        dir: 1,
-        pause: 0,
-        stride: 0,
-        x: x + (Math.random() - 0.5) * 5,
-        y: LINE_Y + Math.sin(x * 0.031) * 3,
-        z: 0,
-        cd: Math.random() * 1.2,
-        recoil: 0,
-        pose: new Pose(),
-        burst: 0,
-        yaw: 0,
-        target: null,
-        step: Math.random(),
-        side: 1,
-        missileCd: 1 + Math.random() * 2,
-        hp: MARINE_HP,
-        deadT: -1,
-        slotX: 0,
-        slotY: 0,
-      });
-    }
-    for (const d of this.defenders) {
-      d.slotX = d.x;
-      d.slotY = d.y;
-    }
-    this.guns.push(
-      { kind: 'tank', x: LANE_CX - 130, y: 572, yaw: -Math.PI / 2, aim: 0, pitch: 0, recoil: 0, cd: 1.5, barrel: 1, target: null, retarget: 0, level: 1 },
-      { kind: 'tank', x: LANE_CX + 130, y: 580, yaw: -Math.PI / 2, aim: 0, pitch: 0, recoil: 0, cd: 3, barrel: 1, target: null, retarget: 0, level: 1 },
-      { kind: 'aa', x: LANE_CX - 202, y: 600, yaw: -Math.PI / 2, aim: 0, pitch: 0.8, recoil: 0, cd: 1, barrel: 1, target: null, retarget: 0, level: 1 },
-      { kind: 'aa', x: LANE_CX + 202, y: 612, yaw: -Math.PI / 2, aim: 0, pitch: 0.8, recoil: 0, cd: 1.6, barrel: 1, target: null, retarget: 0, level: 1 },
-    );
-    // 开局把整条通道（地图顶边到防线前）都铺上虫，上面不留空地。
-    for (let i = 0; i < this.field.initial; i++) this.spawn(TOP_Y + 10 + Math.random() * (LINE_Y - 90 - TOP_Y));
   }
 
   /** 新虫默认从地图顶边外面一点刷出来，走进画面。 */
@@ -687,6 +651,7 @@ export class DefenseScene {
       r -= w;
     }
     const looks = BUG_LOOKS[kind];
+    const at = this.cross ? crossSpawn() : null;
     const speed = {
       crawler: 30 + Math.random() * 22,
       hopper: 34 + Math.random() * 10,
@@ -698,8 +663,8 @@ export class DefenseScene {
     this.bugs.push({
       kind,
       look: looks[Math.floor(Math.random() * looks.length)],
-      x: spanAt(y)[0] + 12 + Math.random() * (spanAt(y)[1] - spanAt(y)[0] - 24),
-      y,
+      x: at ? at.x : spanAt(y)[0] + 12 + Math.random() * (spanAt(y)[1] - spanAt(y)[0] - 24),
+      y: at ? at.y : y,
       z: 0,
       lift: kind === 'flyer' ? 45 + Math.random() * 30 : 0,
       vz: 0,
@@ -808,8 +773,8 @@ export class DefenseScene {
       const d = Math.hypot(b.x - x, b.y - y);
       if (d < r) this.hurt(b, 10 * power, x, y, 1 - d / r);
     }
-    // 只有轰炸机的大炸弹才震一下镜头，而且很轻：炮弹、导弹满屏都是，每发都震眼睛受不了。
-    if (size >= 1) this.shake = Math.max(this.shake, 0.12);
+    // 爆炸本身不震镜头：炮弹、导弹满屏都是，每发都震眼睛受不了。只有巨舰主炮、轰炸支援的炸弹
+    // 在各自落地的地方另外震一下。
   }
 
   private fire(kind: Bullet['kind'], a: Vec3, b: Vec3, target: Bug | null, hit: boolean, fromX: number, fromY: number, visible = true, dmg = kind === 'cannon' ? 2 : 1): void {
@@ -904,11 +869,21 @@ export class DefenseScene {
 
     this.coreHit = Math.max(0, this.coreHit - dt * 4);
     if (this.lost) this.lostT += dt;
-    this.spawnAcc += this.lost || !this.waves ? 0 : dt * this.field.spawnRate;
-    const alive = this.bugs.reduce((n, b) => n + (b.dead < 0 ? 1 : 0), 0);
-    while (this.spawnAcc >= 1) {
-      this.spawnAcc--;
-      if (alive < this.field.maxAlive) this.spawn();
+    // 波次：倒计时到了就来下一波；排着的虫按 WAVE_PACE 只 / 秒陆续刷出来（场上满了就等一等）。
+    if (this.waves && !this.lost) {
+      this.nextIn -= dt;
+      if (this.nextIn <= 0) this.launchWave();
+      if (this.pending > 0) {
+        this.spawnAcc += dt * WAVE_PACE * Math.max(1, this.field.waveScale);
+        let alive = this.bugs.reduce((n, b) => n + (b.dead < 0 ? 1 : 0), 0);
+        while (this.spawnAcc >= 1 && this.pending > 0 && alive < this.field.maxAlive) {
+          this.spawnAcc--;
+          this.pending--;
+          this.spawn();
+          alive++;
+        }
+        this.spawnAcc = Math.min(this.spawnAcc, 2);
+      }
     }
 
     for (let i = this.bugs.length - 1; i >= 0; i--) {
@@ -933,17 +908,17 @@ export class DefenseScene {
       this.moveBug(b, dt, ground);
       // 冲到防线前：扑上去咬最近的机枪兵一口，然后被近距离打倒（碎片和血往远离防线的方向溅）。
       // 正面没人（那个位置的兵死了）就穿过缺口；路过巡逻机甲脚边会被它顺手打掉，没碰上的就一路冲向核心。
-      if (b.y > LINE_Y - 14 && b.kind !== 'flyer') {
+      if ((this.cross || b.y > LINE_Y - 14) && b.kind !== 'flyer') {
         const m = this.marineNear(b.x, b.y, 20);
         if (m) {
           this.hurtMarine(m, BITE[b.kind] ?? 2, b.kind);
           this.hurt(b, 99, b.x, LINE_Y, 0);
           continue;
         }
-        const mech = b.y > LINE_Y + 20 && b.y < LINE_Y + 60 ? this.mechNear(b.x, b.y) : null;
+        const mech = this.cross || (b.y > LINE_Y + 20 && b.y < LINE_Y + 60) ? this.mechNear(b.x, b.y) : null;
         if (mech) {
           // 建造模式的机甲会挨咬（别的地图的机甲是打不坏的）。
-          if (this.buildMode) this.hurtMech(mech, BITE[b.kind] ?? 2);
+          this.hurtMech(mech, BITE[b.kind] ?? 2);
           this.hurt(b, 99, b.x, LINE_Y + 40, 0);
           continue;
         }
@@ -952,16 +927,14 @@ export class DefenseScene {
         this.strike(b);
         continue;
       }
-      if (b.y > LINE_Y && Math.hypot(b.x - CORE.x, b.y - CORE.y) < CORE_REACH) this.crash(b);
+      if ((this.cross || b.y > LINE_Y) && Math.hypot(b.x - CORE.x, b.y - CORE.y) < CORE_REACH) this.crash(b);
     }
 
     this.updateDefenders(dt);
-    if (this.buildMode) this.separate();
+    this.separate();
     this.updateGuns(dt);
-    if (this.field.cruiser) this.updateCruiser(dt);
-    if (this.buildMode) this.updateStructures(dt);
-    else this.updateBuildings(dt);
-    this.updateWalkers(dt);
+    if (this.cruiserOn) this.updateCruiser(dt);
+    this.updateStructures(dt);
     this.updateProjectiles(dt);
     this.updateDebris(dt);
     this.fx.update(dt, this.terrain);
@@ -1051,6 +1024,15 @@ export class DefenseScene {
         b.phase = (b.phase + (b.speed / 9) * dt) % 1;
     }
     // 地面上的虫只能在平台上走；飞虫可以飞到虚空上面去。
+    if (this.cross) {
+      // 十字高地：地面虫只能在路和高台上走，飞虫随便飞。
+      if (b.kind !== 'flyer') {
+        const p = crossClamp(b.x, b.y);
+        b.x = p.x;
+        b.y = p.y;
+      }
+      return;
+    }
     const [ea, eb] = spanAt(b.y);
     b.x = b.kind === 'flyer' ? clamp(b.x, ea - 40, eb + 40) : clamp(b.x, ea + 8, eb - 8);
   }
@@ -1080,7 +1062,7 @@ export class DefenseScene {
           }
         }
         // 站定的士兵被挤离站位（比如机甲走过去），没在打的时候自己走回去。
-        if (this.buildMode && d.owner && d.burst <= 0 && Math.hypot(d.x - d.slotX, d.y - d.slotY) > 8) {
+        if (d.owner && d.burst <= 0 && Math.hypot(d.x - d.slotX, d.y - d.slotY) > 8) {
           d.path = [v2(d.slotX, d.slotY)];
           d.reroutes = 0;
         }
@@ -1260,7 +1242,7 @@ export class DefenseScene {
    * 两边都被堵死就原地站着（min = max）。
    */
   private pacing(cx: number, y: number): [number, number] {
-    const [a, b] = spanAt(y);
+    const [a, b] = this.rowSpan(cx, y);
     let lo = Math.max(cx - 22, a + MECH_R + 4);
     let hi = Math.min(cx + 22, b - MECH_R - 4);
     const blocks = this.structures.map((st) => {
@@ -1352,94 +1334,6 @@ export class DefenseScene {
     return v3(c.x + (lx - back) * cs - ly * sn, c.y + (lx - back) * sn + ly * cs, c.z + Math.sin(c.t * 0.6) * 3 + lz);
   }
 
-  /** 兵营：门的开合（0..1）、要补的空缺、正在造的那个兵还差多久、走在路上的新兵。 */
-  barracksDoor = 0;
-  private doorWant = 0;
-  private doorHold = 0;
-  private exitReady = false;
-  readonly queue: Defender[] = [];
-  private build = 0;
-  readonly walkers: Walker[] = [];
-  private updateBuildings(dt: number): void {
-    // 兵营：有空缺就造兵，造好了升门、新兵从门里走出来，人出了门再落门。
-    if (this.queue.length && this.build <= 0) this.build = BUILD_TIME;
-    if (this.build > 0) {
-      this.build -= dt;
-      if (this.build <= 0) {
-        this.doorWant = 1;
-        this.exitReady = true;
-      }
-    }
-    if (this.exitReady && this.barracksDoor >= 1 && this.queue.length) {
-      this.exitReady = false;
-      this.doorHold = 2.2;
-      const slot = this.queue.shift()!;
-      // 出门 → 绕到兵营侧面 → 往前走到站位。
-      const side = slot.slotX < BARRACKS.x ? -1 : 1;
-      const x0 = BARRACKS.x;
-      const y0 = BARRACKS.y + 30;
-      this.walkers.push({
-        slot,
-        x: x0,
-        y: y0,
-        path: [v2(x0, BARRACKS.y + 52), v2(BARRACKS.x + side * 54, BARRACKS.y + 52), v2(BARRACKS.x + side * 54, BARRACKS.y - 56), v2(slot.slotX, slot.slotY)],
-        phase: 0,
-        heading: Math.PI / 2,
-        pose: new Pose(),
-      });
-    }
-    if (this.doorWant > 0 && this.barracksDoor >= 1 && !this.exitReady) {
-      this.doorHold -= dt;
-      if (this.doorHold <= 0) this.doorWant = 0;
-    }
-    this.barracksDoor = clamp(this.barracksDoor + (this.doorWant > 0 ? dt : -dt), 0, 1);
-
-    if (Math.random() < dt * 3) {
-      const s = Math.random() < 0.5 ? -1 : 1;
-      this.fx.trail(BARRACKS.x - s * 12 + (Math.random() - 0.5) * 2, BARRACKS.y - 26, 48);
-    }
-  }
-
-  /** 从兵营走向站位的新兵：沿路径点走，到位接班。 */
-  private updateWalkers(dt: number): void {
-    for (let i = this.walkers.length - 1; i >= 0; i--) {
-      const w = this.walkers[i];
-      const to = w.path[0];
-      const dx = to.x - w.x;
-      const dy = to.y - w.y;
-      const dist = Math.hypot(dx, dy);
-      const step = WALK_SPEED * dt;
-      if (dist <= step) {
-        w.x = to.x;
-        w.y = to.y;
-        w.path.shift();
-        if (!w.path.length) {
-          // 到位：接替那个空缺。
-          const d = w.slot;
-          d.x = d.slotX;
-          d.y = d.slotY;
-          d.hp = MARINE_HP;
-          d.deadT = -1;
-          d.yaw = 0;
-          d.burst = 0;
-          d.cd = 0.5;
-          d.target = null;
-          if (!this.defenders.includes(d)) this.defenders.push(d);
-          this.walkers.splice(i, 1);
-        }
-        continue;
-      }
-      w.x += (dx / dist) * step;
-      w.y += (dy / dist) * step;
-      const want = Math.atan2(dy, dx);
-      w.heading += clamp(Math.atan2(Math.sin(want - w.heading), Math.cos(want - w.heading)), -dt * 8, dt * 8);
-      // 步频跟着走路速度：一个步态周期身体前进两个步长（左右脚各踩一次），踩在地上的脚就不打滑。
-      w.phase = (w.phase + (WALK_SPEED * dt) / WALK_CYCLE) % 1;
-      walkPose(w.pose, w.phase, WALK_GAIT);
-      carryPose(w.pose);
-    }
-  }
-
   /** 伤到机枪兵：扣血，归零就倒下，空缺排进兵营的队列。 */
   /** 各来源对机枪兵造成的总伤害（调数值用）。 */
   readonly dmgBy: Record<string, number> = {};
@@ -1453,8 +1347,7 @@ export class DefenseScene {
     d.target = null;
     d.burst = 0;
     this.splats.push({ x: d.x, y: d.y + 2, t: 0, blobs: makeSplat(5, 0, 1, true), blood: [rgb(110, 16, 16), rgb(180, 36, 30)] });
-    // 建造模式不补位：尸体躺够了就清掉，兵营看到人数少了会自己再造。
-    if (!this.buildMode) this.queue.push(d);
+    // 不补位：尸体躺够了就清掉，兵营看到人数少了会自己再造。
   }
 
   /** 中弹溅出的一点血星。 */
@@ -1469,8 +1362,10 @@ export class DefenseScene {
    * 还没过防线就什么都不做，返回 false。
    */
   private toCore(b: Bug, step: number): boolean {
-    if (b.y <= LINE_Y + 10) return false;
-    if (this.buildMode && (b.prey === undefined || (b.prey && !this.alive(b.prey)))) b.prey = this.pickPrey(b);
+    // 十字高地：虫一出来就朝核心（或者路上碰到的建筑 / 机甲）冲，隔一会儿看看附近有没有新目标。
+    if (!this.cross && b.y <= LINE_Y + 10) return false;
+    if ((b.prey === undefined || (b.prey && !this.alive(b.prey)) || (b.prey === null && this.cross && Math.random() < 0.05)))
+      b.prey = this.pickPrey(b);
     const goal = b.prey ? this.preyPoint(b.prey, b) : CORE;
     const dx = goal.x - b.x;
     const dy = goal.y - b.y;
@@ -1538,7 +1433,7 @@ export class DefenseScene {
 
   /** 建造模式的机甲挨打：扣血、迸火星，打空就炸掉（车间看到少了一台会再造）。 */
   private hurtMech(d: Defender, dmg: number): void {
-    if (!this.buildMode || d.kind !== 'mech' || !this.defenders.includes(d)) return;
+    if (d.kind !== 'mech' || !this.defenders.includes(d)) return;
     d.hp -= dmg;
     this.spray(v3(d.x, d.y, d.z + 26), 4, rgb(255, 200, 120), 50);
     if (d.hp > 0) return;
@@ -1645,9 +1540,92 @@ export class DefenseScene {
     return best;
   }
 
+  /** 巨舰在不在场：别的地图看地图设定，建造模式要买了才有。 */
+  get cruiserOn(): boolean {
+    return this.field.cruiser && this.cruiserBought;
+  }
+
+  /** 巨舰主炮现在的射程。 */
+  cruiserRange(): number {
+    return CRUISER_RANGE * this.stat(this.cruiserS, 'range');
+  }
+
+  /** 点到巨舰了没有：船浮在半空，点到的地面点会偏上，按它在地上的投影附近一大块算。 */
+  cruiserAt(x: number, y: number): boolean {
+    if (!this.cruiserOn) return false;
+    const c = this.cruiser;
+    const lift = (c.z * Projection.heightSquash) / Projection.groundSquash;
+    return Math.hypot(x - c.x, (y + lift) - c.y) < 80;
+  }
+
+  /** 右键挪巨舰：慢慢开到 (x, y)（不出地图太远）。 */
+  moveCruiser(x: number, y: number): boolean {
+    if (!this.cruiserOn) return false;
+    const c = this.cruiser;
+    const [lo, hi] = this.cross ? [CROSS_C.x - 500, CROSS_C.x + 500] : [LANE_CX - 420, LANE_CX + 420];
+    c.hx = clamp(x, lo, hi);
+    c.hy = clamp(y, this.cross ? CROSS_C.y - 500 : TOP_Y + 60, this.cross ? CROSS_C.y + 500 : END_Y - 40);
+    return true;
+  }
+
+  /** 买巨舰（建造模式，一局一次）：从待命位置的右边远处飞进来。 */
+  buyCruiser(): boolean {
+    if (!this.field.cruiser || this.cruiserBought || this.lost || this.crystals < CRUISER_COST) return false;
+    this.crystals -= CRUISER_COST;
+    this.cruiserBought = true;
+    const c = this.cruiser;
+    c.x = c.hx + 700;
+    c.y = c.hy - 200;
+    c.cd = 4;
+    return true;
+  }
+
   private updateCruiser(dt: number): void {
     const c = this.cruiser;
     c.t += dt;
+    // 往待命位置开：
+    //   第一次进场：船头直接对着待命位置，飞得快（越近越慢），到之前不打。
+    //   之后右键挪位置：先慢慢转身让船头对准目的地，对准了才往前开（沿船头方向，慢慢加速、到了附近慢慢减速），
+    //   路上一直微调方向。整段移动都不打：正在蓄能的那一发中止、目标丢掉；已经打出去的光弹照常落地。
+    const fx = c.hx - c.x;
+    const fy = c.hy - c.y;
+    const far = Math.hypot(fx, fy);
+    const moving = far > 3;
+    if (moving) {
+      const want = Math.atan2(fy, fx);
+      c.lock = null;
+      c.target = null;
+      c.charge = Math.max(0, c.charge - dt * 2);
+      c.recoil = Math.max(0, c.recoil - dt * 1.2);
+      if (!this.cruiserArrived) {
+        c.yaw = want;
+        const sp = Math.min(far, Math.max(20, far * 1.2) * dt);
+        c.x += (fx / far) * sp;
+        c.y += (fy / far) * sp;
+        if (far <= 40) this.cruiserArrived = true;
+        return;
+      }
+      const err = Math.atan2(Math.sin(want - c.yaw), Math.cos(want - c.yaw));
+      // 转向带惯性：想要的角速度随剩余角度变小（最快约 14°/秒），角速度本身也只能慢慢变。
+      const wantSpin = clamp(err * 0.6, -0.25, 0.25);
+      c.spin += clamp(wantSpin - c.spin, -dt * 0.15, dt * 0.15);
+      c.yaw += c.spin * dt;
+      // 船头差不多对准了才开；离目的地越近开得越慢。
+      const wantVel = Math.abs(err) < 0.15 ? Math.min(CRUISER_CRUISE, far * 0.35) : 0;
+      c.vel += clamp(wantVel - c.vel, -dt * 3, dt * 1.5);
+      c.x += Math.cos(c.yaw) * c.vel * dt;
+      c.y += Math.sin(c.yaw) * c.vel * dt;
+      return;
+    }
+    if (far > 0.01) {
+      // 到了：停稳。
+      c.x = c.hx;
+      c.y = c.hy;
+    }
+    c.vel = 0;
+    if (!this.cruiserArrived) this.cruiserArrived = true;
+    this.cruiserS.x = c.x;
+    this.cruiserS.y = c.y;
     c.recoil = Math.max(0, c.recoil - dt * 1.2);
     c.cd -= dt;
     // 一轮攻击 = 对准 → 蓄能（锁死方向和落点）→ 光弹飞行 → 连环爆炸。整轮期间不挑目标、不转向。
@@ -1655,8 +1633,17 @@ export class DefenseScene {
     const busy = c.lock !== null || this.bolts.length > 0 || this.blasts.length > 0;
     const aimAt = (b: Bug): number => Math.atan2(b.y - c.y, b.x - c.x);
     const turn = (a: number): number => Math.abs(Math.atan2(Math.sin(a - c.yaw), Math.cos(a - c.yaw)));
-    if (!busy && (!c.target || c.target.dead >= 0 || c.target.y > LINE_Y - 100)) {
-      const pool = this.bugs.filter((b) => b.dead < 0 && b.kind !== 'flyer' && b.y > 40 && b.y < LINE_Y - 130);
+    const range = this.cruiserRange();
+    const inRange = (b: Bug): boolean => Math.hypot(b.x - c.x, b.y - c.y) <= range;
+    const tooClose = (b: Bug): boolean => (this.cross ? Math.hypot(b.x - CORE.x, b.y - CORE.y) < 140 : b.y > LINE_Y - 100);
+    if (!busy && (!c.target || c.target.dead >= 0 || tooClose(c.target) || !inRange(c.target))) {
+      const pool = this.bugs.filter(
+            (b) =>
+              b.dead < 0 &&
+              b.kind !== 'flyer' &&
+              inRange(b) &&
+              (this.cross ? Math.hypot(b.x - CORE.x, b.y - CORE.y) > 160 : b.y > 40 && b.y < LINE_Y - 130),
+          );
       let best = -Infinity;
       c.target = null;
       for (let k = 0; k < 24 && pool.length; k++) {
@@ -1687,12 +1674,12 @@ export class DefenseScene {
       c.charge = Math.min(1, c.charge + dt / 2);
       if (c.charge >= 1) {
         const from = this.cruiserPoint(92, 0, 8);
-        const to = v3(c.lock.x, c.lock.y, 0);
-        this.bolts.push({ from, to, t: 0, dur: Math.hypot(to.x - from.x, to.y - from.y) / 420 });
+        const to = v3(c.lock.x, c.lock.y, this.terrain.heightAt(c.lock.x, c.lock.y));
+        this.bolts.push({ from, to, t: 0, dur: Math.hypot(to.x - from.x, to.y - from.y) / 420, power: this.stat(this.cruiserS, 'dmg') });
         this.flash(from, 6, rgb(200, 235, 255));
         this.fx.muzzle(from.x, from.y, from.z);
         c.recoil = 1;
-        c.cd = 14 + Math.random() * 4;
+        c.cd = (14 + Math.random() * 4) / this.stat(this.cruiserS, 'rate');
         c.target = null;
         c.lock = null;
       }
@@ -1701,12 +1688,13 @@ export class DefenseScene {
       const b = this.bolts[i];
       b.t += dt;
       if (b.t >= b.dur) {
-        this.explode(b.to.x, b.to.y, 1.9);
+        this.explode(b.to.x, b.to.y, 1.9, b.power);
+        this.shake = Math.max(this.shake, 0.6);
         // 主炮落点：中心一炸，周围再一圈一圈地连环炸开，和一轮轰炸差不多。
         for (let k = 0; k < 7; k++) {
           const a = Math.random() * Math.PI * 2;
           const r = 18 + Math.random() * 30;
-          this.blasts.push({ x: b.to.x + Math.cos(a) * r, y: b.to.y + Math.sin(a) * r * 0.8, t: 0.12 + k * 0.09 + Math.random() * 0.05, size: 0.7 + Math.random() * 0.4 });
+          this.blasts.push({ x: b.to.x + Math.cos(a) * r, y: b.to.y + Math.sin(a) * r * 0.8, t: 0.12 + k * 0.09 + Math.random() * 0.05, size: 0.7 + Math.random() * 0.4, power: b.power });
         }
         this.bolts.splice(i, 1);
       }
@@ -1715,7 +1703,7 @@ export class DefenseScene {
       const b = this.blasts[i];
       b.t -= dt;
       if (b.t <= 0) {
-        this.explode(b.x, b.y, b.size);
+        this.explode(b.x, b.y, b.size, b.power);
         this.blasts.splice(i, 1);
       }
     }
@@ -1736,6 +1724,24 @@ export class DefenseScene {
     return kind === 'tank' ? TANK_RANGE : kind === 'artillery' ? AA_RANGE : 0;
   }
 
+  /** 地面上的一点（按地形高度垫高，再加 dz）→ 缓冲像素。十字高地的高台上要垫高。 */
+  private onGround(cam: Camera, x: number, y: number, dz = 0): Vec2 {
+    return cam.worldToScreenZ(x, y, this.terrain.heightAt(x, y) + dz);
+  }
+
+  /** 过 (x, y) 这一行能走的那一段：单通道是通道的左右边，十字高地是高台 / 路。 */
+  private rowSpan(x: number, y: number): [number, number] {
+    return this.cross ? crossRowSpan(x, y) : spanAt(y);
+  }
+
+  /** 把一个点挪回能站人的地方。 */
+  private walkClamp(x: number, y: number, margin: number): Vec2 {
+    if (this.cross) return crossClamp(x, y);
+    const yy = clamp(y, TOP_Y + 20, END_Y - 20);
+    const [a, b] = spanAt(yy);
+    return v2(clamp(x, a + margin, b - margin), yy);
+  }
+
   /** 某个单位 / 炮在某条升级线上的倍率（count 以外）：没有主人（自动地图）或没有这条线就是 1。 */
   private stat(owner: Structure | undefined, key: StatKey): number {
     if (!owner) return 1;
@@ -1745,9 +1751,40 @@ export class DefenseScene {
 
   // ------------------------------------------------------------ 建造模式
 
-  /** 虫群开始进攻（引导走完或跳过）。 */
+  /** 虫群开始进攻（引导走完或跳过）：先是 WAVE_PREP 秒准备时间，倒计时走完第一波才来。 */
   startWaves(): void {
     this.waves = true;
+  }
+
+  /** 来下一波：波数 +1，这一波的虫排进队列（和场上还没打完的叠在一起），倒计时重新开始。 */
+  private launchWave(): void {
+    this.wave++;
+    this.pending += waveSize(this.wave, this.field.waveScale);
+    this.nextIn = WAVE_GAP;
+  }
+
+  /** 下一波有多少只。 */
+  get nextWaveSize(): number {
+    return waveSize(this.wave + 1, this.field.waveScale);
+  }
+
+  /** 现在提前叫下一波能拿多少晶矿（剩下的秒数 × EARLY_BONUS）。 */
+  get earlyBonus(): number {
+    return this.waves && !this.lost ? Math.round(Math.max(0, this.nextIn) * EARLY_BONUS) : 0;
+  }
+
+  /** 提前叫下一波：按剩余倒计时给晶矿，下一波立刻来。返回给了多少晶矿（不能叫就是 -1）。 */
+  callNextWave(): number {
+    if (!this.waves || this.lost) return -1;
+    const bonus = this.earlyBonus;
+    this.crystals += bonus;
+    this.launchWave();
+    return bonus;
+  }
+
+  /** 还没打完的虫：场上活着的 + 排着没出来的。 */
+  get bugsLeft(): number {
+    return this.bugs.reduce((n, b) => n + (b.dead < 0 ? 1 : 0), 0) + this.pending;
   }
 
   /** (x, y) 处能不能放一座 kind：整块落在通道里、在防线后面（让开机甲巡逻线）、不压核心、不压别的建筑。 */
@@ -1757,10 +1794,15 @@ export class DefenseScene {
     const x1 = x + d.w / 2;
     const y0 = y - d.h / 2;
     const y1 = y + d.h / 2;
-    if (y0 < BUILD_FRONT || y1 > END_Y - 6) return false;
-    for (const yy of [y0, y, y1]) {
-      const [a, b] = spanAt(yy);
-      if (x0 < a + 8 || x1 > b - 8) return false;
+    if (this.cross) {
+      // 十字高地：整块落在高台上（离边 8）。
+      if (x0 < CROSS_C.x - PLAT + 8 || x1 > CROSS_C.x + PLAT - 8 || y0 < CROSS_C.y - PLAT + 8 || y1 > CROSS_C.y + PLAT - 8) return false;
+    } else {
+      if (y0 < BUILD_FRONT || y1 > END_Y - 6) return false;
+      for (const yy of [y0, y, y1]) {
+        const [a, b] = spanAt(yy);
+        if (x0 < a + 8 || x1 > b - 8) return false;
+      }
     }
     // 核心周围留一圈。
     const cx = clamp(CORE.x, x0, x1);
@@ -1776,14 +1818,14 @@ export class DefenseScene {
   /** 花晶矿在 (x, y) 造一座 kind；钱不够或放不下就返回 null。 */
   place(kind: BuildKind, x: number, y: number): Structure | null {
     const d = BUILDS[kind];
-    if (!this.buildMode || this.crystals < d.cost || !this.placeable(kind, x, y)) return null;
+    if (this.crystals < d.cost || !this.placeable(kind, x, y)) return null;
     this.crystals -= d.cost;
     const s: Structure = {
       id: this.nextId++,
       kind,
       x,
       y,
-      up: { count: 1, dmg: 1, range: 1, rate: 1 },
+      up: { count: 1, speed: 1, dmg: 1, range: 1, rate: 1 },
       prog: 0,
       door: 0,
       doorWant: 0,
@@ -1793,11 +1835,15 @@ export class DefenseScene {
       flash: 1,
       hp: d.hp,
       hit: 0,
-      rally: kind === 'factory' ? v2(LANE_CX, PATROL_Y) : v2(LANE_CX, LINE_Y + 4),
+      rally: this.cross
+        ? crossRampTops().reduce((p, q) => (Math.hypot(q.x - x, q.y - y) < Math.hypot(p.x - x, p.y - y) ? q : p))
+        : kind === 'factory'
+          ? v2(LANE_CX, PATROL_Y)
+          : v2(LANE_CX, LINE_Y + 4),
       spent: d.cost,
     };
     if (kind === 'tank' || kind === 'artillery') {
-      s.gun = { kind: kind === 'tank' ? 'tank' : 'aa', x, y, yaw: -Math.PI / 2, aim: 0, pitch: 0.6, recoil: 0, cd: 1, barrel: 1, target: null, retarget: 0, level: 1, owner: s };
+      s.gun = { kind: kind === 'tank' ? 'tank' : 'aa', x, y, yaw: -Math.PI / 2, aim: 0, pitch: 0.6, recoil: 0, cd: 1, barrel: 1, target: null, retarget: 0, owner: s };
       this.guns.push(s.gun);
     }
     this.structures.push(s);
@@ -1808,8 +1854,14 @@ export class DefenseScene {
   }
 
   /** 把一座建筑的某条升级线升一级；满级、没有这条线或钱不够返回 false。 */
+  /** 按编号找：建筑，或者（编号 CRUISER_ID）巨舰。 */
+  private findS(id: number): Structure | null {
+    if (id === CRUISER_ID) return this.cruiserOn ? this.cruiserS : null;
+    return this.structures.find((o) => o.id === id) ?? null;
+  }
+
   upgrade(id: number, key: StatKey): boolean {
-    const s = this.structures.find((o) => o.id === id);
+    const s = this.findS(id);
     const def = s && statDef(s.kind, key);
     if (!s || !def) return false;
     const lv = s.up[key];
@@ -1820,7 +1872,7 @@ export class DefenseScene {
     s.up[key] = lv + 1;
     s.spent += cost;
     s.flash = 1;
-    this.fx.poof(s.x, s.y + BUILDS[s.kind].h / 2, 0, 0.8);
+    if (s !== this.cruiserS) this.fx.poof(s.x, s.y + BUILDS[s.kind].h / 2, 0, 0.8);
     return true;
   }
 
@@ -1849,6 +1901,25 @@ export class DefenseScene {
   callAirstrike(): boolean {
     if (this.crystals < AIRSTRIKE_COST || this.lost) return false;
     this.crystals -= AIRSTRIKE_COST;
+    if (this.cross) {
+      // 十字高地：挑虫最密的一团（随便抽几只，数周围 60 以内的同伴），炮艇从南往北飞过去，只在那一团上空投弹。
+      const live = this.bugs.filter((b) => b.dead < 0);
+      let best = live[0];
+      let bestN = -1;
+      for (let k = 0; k < 12 && live.length; k++) {
+        const c = live[Math.floor(Math.random() * live.length)];
+        const n = live.filter((o) => Math.abs(o.x - c.x) < 60 && Math.abs(o.y - c.y) < 60).length;
+        if (n > bestN) {
+          bestN = n;
+          best = c;
+        }
+      }
+      const tx = best ? best.x : CORE.x;
+      const ty = best ? best.y : CORE.y - 200;
+      const drop = { dropY0: ty - 70, dropY1: ty + 70 };
+      this.planes.push({ x: tx - 18, y: ty + 520, z: 120, dropCd: 0, ...drop }, { x: tx + 18, y: ty + 550, z: 124, dropCd: 0.06, ...drop });
+      return true;
+    }
     const front = this.bugs.filter((b) => b.dead < 0 && b.y < LINE_Y && b.y > 40);
     const mx = front.length ? front.reduce((a, b) => a + b.x, 0) / front.length : LANE_CX;
     const [a, b] = spanAt(LINE_Y - 200);
@@ -1869,7 +1940,7 @@ export class DefenseScene {
   }
 
   structureInfo(id: number): StructureInfo | null {
-    const s = this.structures.find((o) => o.id === id);
+    const s = this.findS(id);
     if (!s) return null;
     const d = BUILDS[s.kind];
     const count = statDef(s.kind, 'count');
@@ -1884,7 +1955,8 @@ export class DefenseScene {
       blocked: false,
       hp: s.hp,
       maxHp: d.hp,
-      refund: Math.round(s.spent * SELL_REFUND),
+      // 巨舰不能卖（-1）。
+      refund: s === this.cruiserS ? -1 : Math.round(s.spent * SELL_REFUND),
       stats: d.stats.map((st) => {
         const lv = s.up[st.key];
         const max = st.values.length;
@@ -1897,7 +1969,6 @@ export class DefenseScene {
   unitCount(s: Structure): number {
     let n = 0;
     for (const d of this.defenders) if (d.owner === s && (d.kind === 'mech' || d.deadT < 0)) n++;
-    for (const w of this.walkers) if (w.slot.owner === s) n++;
     return n;
   }
 
@@ -1912,10 +1983,13 @@ export class DefenseScene {
     const rad = margin > 12 ? MECH_R : RIFLE_R;
     const boxes = this.structures.map((o) => ({ x: o.x, y: o.y, hw: BUILDS[o.kind].w / 2, hh: BUILDS[o.kind].h / 2 }));
     boxes.push({ x: CORE.x, y: CORE.y, hw: 18, hh: 18 });
+    // 十字高地四个角上的崖壁（不外扩：它们本身就到路边为止）。
+    const cliffs = this.cross ? crossBlocks() : [];
     const rects = boxes.map((o) => {
       const wide = { x0: o.x - o.hw - margin, x1: o.x + o.hw + margin, y0: o.y - o.hh - margin, y1: o.y + o.hh + margin };
       return inside(to, wide) ? { x0: o.x - o.hw - rad, x1: o.x + o.hw + rad, y0: o.y - o.hh - rad, y1: o.y + o.hh + rad } : wide;
     });
+    for (const k of cliffs) rects.push({ x0: k.x0 - rad, x1: k.x1 + rad, y0: k.y0 - rad, y1: k.y1 + rad });
     const out: Vec2[] = [];
     let cur = from;
     for (let guard = 0; guard < 6; guard++) {
@@ -2021,6 +2095,11 @@ export class DefenseScene {
     // 建筑：单位的圆和占地矩形重叠了，就沿穿进去最浅的那个方向推出去。核心按一个圆推开。
     for (const u of units) {
       const r = rad(u);
+      if (this.cross) {
+        const p = crossClamp(u.x, u.y);
+        u.x = p.x;
+        u.y = p.y;
+      }
       const cdx = u.x - CORE.x;
       const cdy = u.y - CORE.y;
       const cd = Math.hypot(cdx, cdy);
@@ -2055,13 +2134,22 @@ export class DefenseScene {
    */
   private formationSpot(s: Structure, skip?: Defender): Vec2 {
     const taken = this.defenders.filter((d) => d.owner === s && d.kind === 'rifle' && d.deadT < 0 && d !== skip);
+    // 往哪边排：单通道朝上（虫来的方向）；十字高地朝"从核心指向集结点"的方向（集结点在哪个路口就朝那条路）。
+    let fx = 0;
+    let fy = -1;
+    if (this.cross) {
+      const dx = s.rally.x - CORE.x;
+      const dy = s.rally.y - CORE.y;
+      const l = Math.hypot(dx, dy);
+      if (l > 1) [fx, fy] = [dx / l, dy / l];
+    }
     for (let i = 0; i < 60; i++) {
       const row = Math.floor(i / 5);
       const k = i % 5;
       const col = k === 0 ? 0 : k % 2 === 1 ? (k + 1) / 2 : -k / 2;
-      const y = s.rally.y - row * 16;
-      const [a, b] = spanAt(y);
-      const x = clamp(s.rally.x + col * 16, a + 10, b - 10);
+      const p = this.walkClamp(s.rally.x + fx * row * 16 - fy * col * 16, s.rally.y + fy * row * 16 + fx * col * 16, 10);
+      const x = p.x;
+      const y = p.y;
       if (this.blockedSpot(x, y)) continue;
       if (!taken.some((d) => Math.abs(d.slotX - x) < 1 && Math.abs(d.slotY - y) < 1)) return v2(x, y);
     }
@@ -2071,6 +2159,7 @@ export class DefenseScene {
   /** 这个位置站不了机甲：机甲的圆会压到建筑或核心。 */
   private mechBlocked(x: number, y: number): boolean {
     if (Math.hypot(x - CORE.x, y - CORE.y) < 18 + MECH_R + 2) return true;
+    if (this.cross && !crossWalkable(x, y)) return true;
     return this.structures.some((st) => {
       const d = BUILDS[st.kind];
       return Math.abs(x - st.x) < d.w / 2 + MECH_R + 2 && Math.abs(y - st.y) < d.h / 2 + MECH_R + 2;
@@ -2080,6 +2169,7 @@ export class DefenseScene {
   /** 这个位置站不了人：在建筑占地里（外扩一圈）或者压着核心。 */
   private blockedSpot(x: number, y: number): boolean {
     if (Math.hypot(x - CORE.x, y - CORE.y) < 30) return true;
+    if (this.cross && !crossWalkable(x, y)) return true;
     return this.structures.some((st) => {
       const d = BUILDS[st.kind];
       return Math.abs(x - st.x) < d.w / 2 + RIFLE_R + 2 && Math.abs(y - st.y) < d.h / 2 + RIFLE_R + 2;
@@ -2092,7 +2182,7 @@ export class DefenseScene {
    */
   private regroup(s: Structure): void {
     const mechs = this.defenders.filter((d) => d.kind === 'mech' && d.owner === s);
-    const [a, b] = spanAt(s.rally.y);
+    const [a, b] = this.rowSpan(s.rally.x, s.rally.y);
     // 位置：从集结点往两边每 40 一个候选（0、-40、+40、-80…），跳过被建筑 / 核心占着的，取前几个、从左到右排。
     const y = s.rally.y;
     const spots: number[] = [];
@@ -2152,9 +2242,7 @@ export class DefenseScene {
       x = s.x + (dx / dist) * RALLY_MAX;
       y = s.y + (dy / dist) * RALLY_MAX;
     }
-    const yy = clamp(y, TOP_Y + 20, END_Y - 20);
-    const [a, b] = spanAt(yy);
-    s.rally = v2(clamp(x, a + 14, b - 14), yy);
+    s.rally = this.walkClamp(x, y, 14);
     this.fx.poof(s.rally.x, s.rally.y, 0, 0.5);
     if (s.kind === 'factory') {
       this.regroup(s);
@@ -2182,7 +2270,7 @@ export class DefenseScene {
       if (!count || !d.time) continue;
       const cap = count.values[s.up.count - 1];
       if (!s.exitReady && this.unitCount(s) < cap) {
-        s.prog += dt / d.time;
+        s.prog += (dt / d.time) * this.stat(s, 'speed');
         if (s.prog >= 1) {
           s.prog = 1;
           s.exitReady = true;
@@ -2269,7 +2357,7 @@ export class DefenseScene {
           g.cd = (2.2 + Math.random() * 1.6) / this.stat(g.owner, 'rate');
           g.recoil = 1;
           const dir = g.yaw + g.aim;
-          const from = v3(g.x + Math.cos(dir) * 46, g.y + Math.sin(dir) * 46, 16.5);
+          const from = v3(g.x + Math.cos(dir) * 46, g.y + Math.sin(dir) * 46, this.terrain.heightAt(g.x, g.y) + 16.5);
           const dist = Math.hypot(t.x - from.x, t.y - from.y);
           this.shells.push({ from, to: v3(t.x, t.y, this.terrain.heightAt(t.x, t.y)), t: 0, dur: dist / 650, arc: 5, size: 0.9, power: this.stat(g.owner, 'dmg') });
           this.fx.muzzle(from.x, from.y, from.z);
@@ -2280,7 +2368,7 @@ export class DefenseScene {
           const range = this.gunRange(g);
           const fl = this.inRange(g.x, g.y, range, true);
           // 建造模式的火炮：没有飞虫就打地面上最近的那只。
-          const pool = fl.length || !this.buildMode ? fl : this.inRange(g.x, g.y, range, false);
+          const pool = fl.length ? fl : this.inRange(g.x, g.y, range, false);
           g.target = this.nearest(pool, g.x, g.y);
         }
         const t = g.target;
@@ -2301,7 +2389,7 @@ export class DefenseScene {
           const from = v3(
             g.x + Math.cos(dir) * (L + 4) + side.x * 3.2 * g.barrel,
             g.y + Math.sin(dir) * (L + 4) + side.y * 3.2 * g.barrel,
-            13 + 33 * Math.sin(g.pitch),
+            this.terrain.heightAt(g.x, g.y) + 13 + 33 * Math.sin(g.pitch),
           );
           // 打飞虫一发命中就炸；打地面命中率高一些、按攻击力扣血。
           const ground = t.lift <= 20;
@@ -2365,17 +2453,11 @@ export class DefenseScene {
       }
     }
 
-    if (this.field.gunships) this.planeCd -= dt;
-    if (this.planeCd <= 0) {
-      this.planeCd = 8 + Math.random() * 5;
-      const x = LANE_CX - 110 + Math.random() * 220;
-      this.planes.push({ x, y: PLANE_ENTRY_Y, z: 120, dropCd: 0 }, { x: x + 36, y: PLANE_ENTRY_Y + 30, z: 124, dropCd: 0.06 });
-    }
     for (let i = this.planes.length - 1; i >= 0; i--) {
       const p = this.planes[i];
       p.y -= 240 * dt;
       p.dropCd -= dt;
-      if (p.y < LINE_Y - 120 && p.y > 40 && p.dropCd <= 0) {
+      if (p.y < (p.dropY1 ?? LINE_Y - 120) && p.y > (p.dropY0 ?? 40) && p.dropCd <= 0) {
         p.dropCd = 0.14;
         this.bombs.push({ x: p.x + (Math.random() - 0.5) * 6, y: p.y, z: p.z - 4, vy: -190, vz: 0 });
       }
@@ -2389,6 +2471,7 @@ export class DefenseScene {
       b.z += b.vz * dt;
       if (b.z <= this.terrain.heightAt(b.x, b.y)) {
         this.explode(b.x, b.y, 1.2);
+        this.shake = Math.max(this.shake, 0.32);
         this.bombs.splice(i, 1);
       }
     }
@@ -2402,7 +2485,7 @@ export class DefenseScene {
         this.fx.poof(g.to.x, g.to.y, g.to.z, 0.8);
         const m = this.marineNear(g.to.x, g.to.y, 12);
         if (m) this.hurtMarine(m, ACID_DMG, 'acid');
-        if (this.buildMode) {
+        {
           const mech = this.mechNear(g.to.x, g.to.y);
           if (mech) this.hurtMech(mech, ACID_DMG);
           for (const st of this.structuresNear(g.to.x, g.to.y, 6)) this.hurtStructure(st, ACID_DMG);
@@ -2418,7 +2501,7 @@ export class DefenseScene {
         this.fx.poof(s.x, s.y, this.terrain.heightAt(s.x, s.y), 0.5);
         const m = this.marineNear(s.x, s.y, 9);
         if (m) this.hurtMarine(m, SPIKE_DMG, 'spike');
-        if (this.buildMode) {
+        {
           const mech = this.mechNear(s.x, s.y);
           if (mech) this.hurtMech(mech, SPIKE_DMG);
         }
@@ -2512,13 +2595,14 @@ export class DefenseScene {
     for (const s of this.structures) {
       const d = BUILDS[s.kind];
       if (!s.gun) {
-        const m = buildingMesh(s.kind, s.x, s.y, this.time, s.door);
-        drawShadow(ground, cam, m, 0, 9e5, 70);
+        const bz = this.terrain.heightAt(s.x, s.y);
+        const m = buildingMesh(s.kind, s.x, s.y, this.time, s.door, bz);
+        drawShadow(ground, cam, m, bz, 9e5, 70);
         drawMesh(units, cam, m, v2(s.x, s.y));
       }
       // 刚建好 / 升级：地上一圈白光散开。
       if (s.flash > 0) {
-        const at = cam.worldToScreen(s.x, s.y);
+        const at = this.onGround(cam, s.x, s.y);
         const r = (Math.max(d.w, d.h) * 0.6 + (1 - s.flash) * 20) * g;
         ground.ellipse(at, r, r * Projection.groundSquash, 0, rgba(200, 240, 255, Math.round(120 * s.flash)), 2e6);
       }
@@ -2538,11 +2622,11 @@ export class DefenseScene {
         }
       }
       // 头顶：升过几次级（几个小黄块）、出兵类的进度条和读数。
-      const top = cam.worldToScreenZ(s.x, s.y - d.h * 0.25, d.top + 10);
+      const top = this.onGround(cam, s.x, s.y - d.h * 0.25, d.top + 10);
       const sz = Math.max(2, Math.round(1.9 * g));
       const gap = Math.max(1, Math.round(0.5 * g));
       let y = top.y;
-      const ups = s.up.count + s.up.dmg + s.up.range + s.up.rate - 4;
+      const ups = Object.values(s.up).reduce((a, b) => a + b, 0) - Object.keys(s.up).length;
       for (let i = 0; i < ups; i++) fx.rect(v2(top.x + (i - (ups - 1) / 2) * (sz + gap + 1), y - sz - 3), sz, sz, 0, rgb(255, 196, 70), 20.02);
       // 现在就能升级（有没满级的线、而且付得起）：头顶一个转着、上下浮的绿色箭头。
       if (this.canUpgrade(s)) {
@@ -2575,7 +2659,7 @@ export class DefenseScene {
       const r0 = this.baseRange(gh.kind);
       if (r0) this.drawRange(ground, cam, gh.x, gh.y, r0, c, false);
       this.drawFootprint(ground, cam, gh.kind, gh.x, gh.y, c, true);
-      const m = buildingMesh(gh.kind, gh.x, gh.y, this.time, 0);
+      const m = buildingMesh(gh.kind, gh.x, gh.y, this.time, 0, this.terrain.heightAt(gh.x, gh.y));
       for (const f of m.faces) {
         const k = lerpColor(f.color, c, 0.5);
         f.color = rgba(k.r, k.g, k.b, 150);
@@ -2634,7 +2718,7 @@ export class DefenseScene {
 
   /** 射程圈：地上一圈淡淡的底色 + 一圈描边（dashed 时是虚线，用来画"升级后的射程"）。 */
   private drawRange(ground: Layers['ground'], cam: Camera, x: number, y: number, r: number, c: Rgba, dashed: boolean): void {
-    const at = cam.worldToScreen(x, y);
+    const at = this.onGround(cam, x, y);
     const g = cam.grain;
     if (!dashed) ground.ellipse(at, r * g, r * g * Projection.groundSquash, 0, rgba(c.r, c.g, c.b, 22), 2e6 - 2);
     const n = 72;
@@ -2643,7 +2727,7 @@ export class DefenseScene {
       if (dashed && i % 2) continue;
       const a0 = (i / n) * Math.PI * 2;
       const a1 = ((i + 1) / n) * Math.PI * 2;
-      ground.bar(cam.worldToScreen(x + Math.cos(a0) * r, y + Math.sin(a0) * r), cam.worldToScreen(x + Math.cos(a1) * r, y + Math.sin(a1) * r), t, rgba(c.r, c.g, c.b, 200), 2e6 - 1);
+      ground.bar(this.onGround(cam, x + Math.cos(a0) * r, y + Math.sin(a0) * r), this.onGround(cam, x + Math.cos(a1) * r, y + Math.sin(a1) * r), t, rgba(c.r, c.g, c.b, 200), 2e6 - 1);
     }
   }
 
@@ -2657,17 +2741,17 @@ export class DefenseScene {
     for (let k = 0; k < len; k += 10) {
       const u0 = k / len;
       const u1 = Math.min(1, (k + 5) / len);
-      ground.bar(cam.worldToScreen(lerp(from.x, r.x, u0), lerp(from.y, r.y, u0)), cam.worldToScreen(lerp(from.x, r.x, u1), lerp(from.y, r.y, u1)), Math.max(1, g * 0.8), rgba(255, 196, 70, 170), 2e6);
+      ground.bar(this.onGround(cam, lerp(from.x, r.x, u0), lerp(from.y, r.y, u0)), this.onGround(cam, lerp(from.x, r.x, u1), lerp(from.y, r.y, u1)), Math.max(1, g * 0.8), rgba(255, 196, 70, 170), 2e6);
     }
-    const foot = cam.worldToScreen(r.x, r.y);
+    const foot = this.onGround(cam, r.x, r.y);
     ground.ellipse(foot, 7 * g, 7 * g * Projection.groundSquash, 0, rgba(255, 196, 70, 70), 2e6);
-    const base = cam.worldToScreenZ(r.x, r.y, 0);
-    const tip = cam.worldToScreenZ(r.x, r.y, 20);
+    const base = this.onGround(cam, r.x, r.y);
+    const tip = this.onGround(cam, r.x, r.y, 20);
     const depth = cam.worldToScreen(r.x, r.y).y * Projector.DEPTH_PER_ROW;
     units.bar(base, tip, Math.max(1, g * 0.8), rgb(220, 224, 232), depth);
     const wave = Math.sin(this.time * 6) * 1.5 * g;
-    const flagA = cam.worldToScreenZ(r.x, r.y, 20);
-    const flagB = cam.worldToScreenZ(r.x, r.y, 13);
+    const flagA = this.onGround(cam, r.x, r.y, 20);
+    const flagB = this.onGround(cam, r.x, r.y, 13);
     const flagTip = v2(flagA.x + 10 * g, (flagA.y + flagB.y) / 2 + wave);
     units.quad(flagA, flagTip, flagB, flagB, rgb(255, 160, 50), depth + 0.01);
   }
@@ -2679,7 +2763,7 @@ export class DefenseScene {
     const x1 = x + d.w / 2;
     const y0 = y - d.h / 2;
     const y1 = y + d.h / 2;
-    const P = (px: number, py: number): Vec2 => cam.worldToScreen(px, py);
+    const P = (px: number, py: number): Vec2 => this.onGround(cam, px, py);
     if (fill) ground.quad(P(x0, y0), P(x1, y0), P(x1, y1), P(x0, y1), rgba(c.r, c.g, c.b, 60), 2e6);
     const t = Math.max(1, cam.grain * 0.9);
     const edge = rgba(c.r, c.g, c.b, 220);
@@ -2693,17 +2777,18 @@ export class DefenseScene {
   private drawCore(ground: Layers['ground'], units: Layers['units'], fx: Layers['fx'], cam: Camera): void {
     const g = cam.grain;
     const sq = Projection.groundSquash;
-    const foot = cam.worldToScreen(CORE.x, CORE.y);
+    const cz = this.terrain.heightAt(CORE.x, CORE.y);
+    const foot = this.onGround(cam, CORE.x, CORE.y);
     if (!this.lost) {
       const pulse = 0.5 + 0.5 * Math.sin(this.time * 2.2);
       ground.ellipse(foot, 34 * g, 34 * g * sq, 0, rgba(110, 220, 255, Math.round(22 + 22 * pulse + 60 * this.coreHit)), 9.5e5);
       ground.ellipse(foot, 22 * g, 22 * g * sq, 0, rgba(150, 236, 255, Math.round(30 + 26 * pulse)), 9.5e5 + 1);
     }
-    const m = crystalCore(new Mesh3().translate(CORE.x, CORE.y, 0), { t: this.time, hit: this.coreHit, broken: this.lost }, LIVERY_BLUE);
-    drawShadow(ground, cam, m, 0, 9e5, 60);
+    const m = crystalCore(new Mesh3().translate(CORE.x, CORE.y, cz), { t: this.time, hit: this.coreHit, broken: this.lost }, LIVERY_BLUE);
+    drawShadow(ground, cam, m, cz, 9e5, 60);
     drawMesh(units, cam, m, CORE);
     if (!this.lost) {
-      const tip = cam.worldToScreenZ(CORE.x, CORE.y, 40 + Math.sin(this.time * 1.6) * 3);
+      const tip = cam.worldToScreenZ(CORE.x, CORE.y, cz + 40 + Math.sin(this.time * 1.6) * 3);
       fx.disc(tip, Math.max(1, g * (1.2 + 0.6 * Math.sin(this.time * 5))), rgba(230, 255, 255, 200), 9);
       this.drawCoreBar(fx, cam);
     }
@@ -2715,7 +2800,7 @@ export class DefenseScene {
    */
   private drawCoreBar(fx: Layers['fx'], cam: Camera): void {
     const g = cam.grain;
-    const at = cam.worldToScreenZ(CORE.x, CORE.y + 26, 0);
+    const at = this.onGround(cam, CORE.x, CORE.y + 26);
     const total = CORE_PIPS * 2;
     const n = Math.ceil((clamp(this.coreHp, 0, this.coreMax) / this.coreMax) * total);
     const sz = Math.max(2, Math.round(1.9 * g));
@@ -2738,14 +2823,38 @@ export class DefenseScene {
     drawPixelText(fx, `${Math.ceil(this.coreHp)}/${this.coreMax}`, v2(at.x, at.y + rows / 2 + 2 + px * 3.5), px, rgb(220, 236, 255), rgba(8, 10, 16, 220), 20.02);
   }
 
-  private drawCruiser(units: Layers['units'], fx: Layers['fx'], cam: Camera): void {
+  /** 选中的是巨舰：射程圈（悬停射程升级时再加一圈虚线）、脚下一圈选中环；在挪位置的话画虚线和目的地标记。 */
+  private drawCruiserSelection(ground: Layers['ground'], cam: Camera): void {
+    const c = this.cruiser;
+    const g = cam.grain;
+    this.drawRange(ground, cam, c.x, c.y, this.cruiserRange(), rgba(110, 220, 255, 255), false);
+    const next = statDef('cruiser', 'range');
+    if (this.rangePreview && next && this.cruiserS.up.range < next.values.length) {
+      this.drawRange(ground, cam, c.x, c.y, CRUISER_RANGE * next.values[this.cruiserS.up.range], rgba(120, 245, 120, 255), true);
+    }
+    const foot = this.onGround(cam, c.x, c.y);
+    ground.ellipse(foot, 70 * g, 70 * g * Projection.groundSquash, 0, rgba(110, 220, 255, 50), 2e6);
+    const far = Math.hypot(c.hx - c.x, c.hy - c.y);
+    if (far > 2) {
+      for (let k = 0; k < far; k += 12) {
+        const u0 = k / far;
+        const u1 = Math.min(1, (k + 6) / far);
+        ground.bar(this.onGround(cam, lerp(c.x, c.hx, u0), lerp(c.y, c.hy, u0)), this.onGround(cam, lerp(c.x, c.hx, u1), lerp(c.y, c.hy, u1)), Math.max(1, g * 0.8), rgba(110, 220, 255, 170), 2e6);
+      }
+      const at = this.onGround(cam, c.hx, c.hy);
+      ground.ellipse(at, 12 * g, 12 * g * Projection.groundSquash, 0, rgba(110, 220, 255, 90), 2e6);
+      ground.ellipse(at, 5 * g, 5 * g * Projection.groundSquash, 0, rgba(200, 245, 255, 220), 2e6 + 1);
+    }
+  }
+
+  private drawCruiser(units: Layers['sky'], fx: Layers['skyFx'], cam: Camera): void {
     const c = this.cruiser;
     const g = cam.grain;
     const scr = (q: Vec3): Vec2 => cam.worldToScreenZ(q.x, q.y, q.z);
     const at = this.cruiserPoint(0, 0, 0);
     const roll = Math.sin(c.t * 0.4) * 0.03;
     const m = battlecruiser(new Mesh3().translate(at.x, at.y, at.z).rotZ(c.yaw).rotX(roll).scale(CRUISER_SCALE), { charge: c.charge, thrust: 0.8 + 0.2 * Math.sin(c.t * 5) }, LIVERY_BLUE);
-    drawMesh(units, cam, m, v2(c.x, c.y));
+    drawMesh(units, cam, m, v2(c.x, c.y), true);
     // 引擎尾焰：四个喷口各一团青白的光，微微闪。
     for (const [ly, lz] of [[-14, 6], [14, 6], [-6, 14], [6, 14]]) {
       const p = scr(this.cruiserPoint(-104, ly, lz));
@@ -2777,7 +2886,7 @@ export class DefenseScene {
   }
 
   draw(layers: Layers, cam: Camera): void {
-    const { ground, units, fx } = layers;
+    const { ground, units, fx, sky, skyFx } = layers;
     const g = cam.grain;
     drawFloor(ground, cam, this.time);
 
@@ -2840,13 +2949,11 @@ export class DefenseScene {
         drawMesh(units, cam, m, v2(d.x, d.y));
       } else if (d.deadT < CORPSE_TIME) figure(d.pose, d.x, d.y, d.z, d.yaw);
     }
-    for (const w of this.walkers) figure(w.pose, w.x, w.y, 0, w.heading + Math.PI / 2);
     // 血条：头顶一排小方块。机枪兵 5 格（走在路上的新兵也带着），建造模式的机甲 8 格。
     for (const d of this.defenders) {
       if (d.kind === 'rifle' && d.deadT < 0) this.hpBar(fx, cam, cam.worldToScreenZ(d.x, d.y, d.z + 27), d.hp / MARINE_HP, HP_PIPS);
-      if (d.kind === 'mech' && this.buildMode) this.hpBar(fx, cam, cam.worldToScreenZ(d.x, d.y, d.z + 54), d.hp / MECH_HP, 8);
+      if (d.kind === 'mech') this.hpBar(fx, cam, cam.worldToScreenZ(d.x, d.y, d.z + 54), d.hp / MECH_HP, 8);
     }
-    for (const w of this.walkers) this.hpBar(fx, cam, cam.worldToScreenZ(w.x, w.y, 27), w.slot.hp / MARINE_HP, HP_PIPS);
 
     for (const gun of this.guns) {
       const z = this.terrain.heightAt(gun.x, gun.y);
@@ -2870,36 +2977,31 @@ export class DefenseScene {
       fx.disc(at, Math.max(1.5, 1.6 * g), rgb(170, 240, 70), 7);
       fx.disc(v2(at.x - 0.4 * g, at.y - 0.4 * g), Math.max(1, 0.8 * g), rgb(236, 255, 170), 7.01);
     }
-    // 后方建筑。建造模式画玩家造的那些；别的地图是固定的兵营和指挥中心。
-    if (this.buildMode) {
-      this.drawStructures(ground, units, fx, cam);
-      this.drawCore(ground, units, fx, cam);
-    } else {
-      const bm = barracks(new Mesh3().translate(BARRACKS.x, BARRACKS.y, 0).rotZ(Math.PI / 2), { t: this.time, door: this.barracksDoor }, LIVERY_BLUE);
-      drawShadow(ground, cam, bm, 0, 9e5, 70);
-      drawMesh(units, cam, bm, BARRACKS);
-      const cm = commandCenter(new Mesh3().translate(BASE_CC.x, BASE_CC.y, 0).rotZ(Math.PI / 2), { t: this.time }, LIVERY_BLUE);
-      drawShadow(ground, cam, cm, 0, 9e5, 70);
-      drawMesh(units, cam, cm, BASE_CC);
-      this.drawCore(ground, units, fx, cam);
-    }
+    // 玩家造的建筑、核心。
+    this.drawStructures(ground, units, fx, cam);
+    this.drawCore(ground, units, fx, cam);
 
-    if (this.field.cruiser) this.drawCruiser(units, fx, cam);
+    if (this.cruiserOn) {
+      if (this.selected === CRUISER_ID) this.drawCruiserSelection(ground, cam);
+      // 巨舰在天空层：地面上的一切（单位、血条、子弹、炮火、爆炸）都被它盖住。
+      this.drawCruiser(sky, skyFx, cam);
+    }
 
     for (const b of this.bombs) {
       const m = bomb(new Mesh3().translate(b.x, b.y, b.z).rotZ(-Math.PI / 2).rotY(Math.atan2(-b.vz, -b.vy)));
       drawShadow(ground, cam, m, this.terrain.heightAt(b.x, b.y), 9e5, 60);
-      drawMesh(units, cam, m, v2(b.x, b.y), true);
+      drawMesh(sky, cam, m, v2(b.x, b.y), true);
     }
+    // 炮艇和它投下的炸弹也在天上。
     for (const p of this.planes) {
       const m = gunship(new Mesh3().translate(p.x, p.y, p.z).rotZ(-Math.PI / 2).scale(0.75), { bank: 0, thrust: 1 }, LIVERY_BLUE);
       drawShadow(ground, cam, m, 0, 9e5, 70);
-      drawMesh(units, cam, m, v2(p.x, p.y), true);
+      drawMesh(sky, cam, m, v2(p.x, p.y), true);
       // 两个尾喷口的火焰。
       for (const sd of [-1, 1]) {
         const tail = cam.worldToScreenZ(p.x + sd * 15, p.y + 19, p.z + 4.5);
-        fx.disc(tail, 2.6 * g, rgba(255, 170, 80, 170), 8);
-        fx.disc(tail, 1.3 * g, rgb(255, 240, 200), 8.01);
+        skyFx.disc(tail, 2.6 * g, rgba(255, 170, 80, 170), 8);
+        skyFx.disc(tail, 1.3 * g, rgb(255, 240, 200), 8.01);
       }
     }
 

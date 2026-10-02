@@ -1,12 +1,21 @@
 import type { BattleState } from '../game/main';
 
 /**
- * 局内 HUD：右上角是晶矿数（核心血条画在战场里核心的正下方，不在这儿）。核心碎了之后弹结算面板
- * （重新开始 / 返回主界面）。只管显示，每帧从 state() 读数；样式在 style.ts 的 .pdw-hud、.pdw-over。
+ * 局内 HUD：
+ *
+ *   右上角   波次面板（当前第几波、场上还剩多少虫；下一波第几波、多少只、倒计时；"下一波"按钮，
+ *            提前叫按剩余秒数给晶矿）→ 晶矿数 → （外面挂上来的）建造列表
+ *   上方正中 每来一波闪一行"第 N 波来袭"
+ *   结算     核心碎了之后弹（重新开始 / 返回主界面）
+ *
+ * 核心血条画在战场里核心的正下方，不在这儿。只管显示，每帧从 state() 读数；样式在 style.ts 的
+ * .pdw-hud、.pdw-wave、.pdw-banner、.pdw-over。
  */
 
 /** 核心碎了多久之后弹结算（等爆炸演完）。 */
 const OVER_DELAY = 1.6;
+/** "第 N 波来袭"停留多久。 */
+const BANNER_TIME = 2.2;
 
 const CRYSTAL_ICON =
   '<svg viewBox="0 0 16 16"><path d="M8 1l5 5-5 9-5-9z" fill="currentColor"/><path d="M8 1l2 5-2 9z" fill="#fff" opacity=".35"/></svg>';
@@ -14,19 +23,50 @@ const CRYSTAL_ICON =
 export interface HudActions {
   restart(): void;
   quit(): void;
+  /** 提前叫下一波。 */
+  nextWave(): void;
 }
+
+const clock = (sec: number): string => {
+  const t = Math.max(0, Math.ceil(sec));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+};
+
+/** 改一个节点的文字：没变就不碰 DOM（不打断按钮的悬停 / 按下）。 */
+const setText = (el: Element, text: string): void => {
+  if (el.textContent !== text) el.textContent = text;
+};
 
 export class Hud {
   private readonly bar = document.createElement('div');
   private readonly over = document.createElement('div');
+  private readonly banner = document.createElement('div');
   private readonly crystalText: HTMLElement;
+  private readonly waveEl: HTMLElement;
   private shownCrystals = -1;
+  private shownWave = 0;
+  private bannerT = 0;
   private overShown = false;
 
   constructor(host: HTMLElement, actions: HudActions) {
     this.bar.className = 'pdw-hud hidden';
-    this.bar.innerHTML = `<div class="pdw-crystal">${CRYSTAL_ICON}<b></b><em>晶矿</em></div>`;
+    this.bar.innerHTML = `
+      <div class="pdw-wave">
+        <div class="pdw-wave-now"><span>波次</span><b data-f="now"></b><em data-f="left"></em></div>
+        <div class="pdw-wave-next">
+          <span data-f="next"></span>
+          <b data-f="time"></b>
+        </div>
+        <div class="pdw-wave-bar"><i data-f="bar"></i></div>
+        <button class="pdw-btn pdw-wave-call" data-act="next"><span>下一波</span><em>${CRYSTAL_ICON}<i data-f="bonus"></i></em></button>
+      </div>
+      <div class="pdw-crystal">${CRYSTAL_ICON}<b></b><em>晶矿</em></div>`;
     this.crystalText = this.bar.querySelector('.pdw-crystal b')!;
+    this.waveEl = this.bar.querySelector('.pdw-wave')!;
+    this.bar.querySelector('[data-act=next]')!.addEventListener('click', () => actions.nextWave());
+    this.bar.querySelector('.pdw-wave')!.addEventListener('pointerdown', (e) => e.stopPropagation());
+
+    this.banner.className = 'pdw-banner hidden';
 
     this.over.className = 'pdw-over hidden';
     this.over.innerHTML = `
@@ -35,6 +75,7 @@ export class Hud {
         <h2>核心被摧毁</h2>
         <div class="pdw-over-stats">
           <div><span>坚守时间</span><b data-k="time"></b></div>
+          <div><span>坚持到</span><b data-k="wave"></b></div>
           <div><span>获得晶矿</span><b data-k="crystals"></b></div>
         </div>
         <div class="pdw-over-actions">
@@ -46,6 +87,7 @@ export class Hud {
     this.over.querySelector('[data-act=quit]')!.addEventListener('click', () => actions.quit());
 
     host.appendChild(this.bar);
+    host.appendChild(this.banner);
     host.appendChild(this.over);
   }
 
@@ -57,29 +99,67 @@ export class Hud {
   show(): void {
     this.bar.classList.remove('hidden');
     this.over.classList.add('hidden');
+    this.banner.classList.add('hidden');
     this.overShown = false;
     this.shownCrystals = -1;
+    this.shownWave = 0;
+    this.bannerT = 0;
   }
 
   hide(): void {
     this.bar.classList.add('hidden');
     this.over.classList.add('hidden');
+    this.banner.classList.add('hidden');
     this.overShown = false;
   }
 
-  update(st: BattleState | null): void {
+  update(st: BattleState | null, dt = 0): void {
     if (!st) return;
     // 数字没变就不碰 DOM。
     if (st.crystals !== this.shownCrystals) {
       this.shownCrystals = st.crystals;
       this.crystalText.textContent = st.crystals.toLocaleString();
     }
+    this.updateWave(st);
+    // 新的一波来了：上方正中闪一行。
+    if (st.wave.current > this.shownWave) {
+      this.shownWave = st.wave.current;
+      this.banner.innerHTML = `<small>WAVE ${st.wave.current}</small><b>第 ${st.wave.current} 波来袭</b>`;
+      this.banner.classList.remove('hidden');
+      // 重播动画：去掉再加回 class。
+      this.banner.classList.remove('show');
+      void this.banner.offsetWidth;
+      this.banner.classList.add('show');
+      this.bannerT = BANNER_TIME;
+    }
+    if (this.bannerT > 0) {
+      this.bannerT -= dt;
+      if (this.bannerT <= 0) this.banner.classList.add('hidden');
+    }
     if (st.lost && st.lostT >= OVER_DELAY && !this.overShown) {
       this.overShown = true;
       const t = Math.floor(st.time);
       this.over.querySelector('[data-k=time]')!.textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+      this.over.querySelector('[data-k=wave]')!.textContent = `第 ${st.wave.current} 波`;
       this.over.querySelector('[data-k=crystals]')!.textContent = st.crystals.toLocaleString();
       this.over.classList.remove('hidden');
     }
+  }
+
+  /** 波次面板：没开始（引导中）整块藏起来；第一波来之前写"准备时间"。 */
+  private updateWave(st: BattleState): void {
+    const w = st.wave;
+    this.waveEl.classList.toggle('hidden', !w.started);
+    if (!w.started) return;
+    const q = (f: string): Element => this.waveEl.querySelector(`[data-f=${f}]`)!;
+    setText(q('now'), w.current === 0 ? '准备中' : `第 ${w.current} 波`);
+    setText(q('left'), w.current === 0 ? '' : `剩余 ${w.left}`);
+    setText(q('next'), `下一波 · 第 ${w.current + 1} 波 · ${w.nextSize} 只`);
+    setText(q('time'), clock(w.nextIn));
+    (q('bar') as HTMLElement).style.width = `${Math.max(0, Math.min(1, w.nextIn / (w.current === 0 ? 20 : 30))) * 100}%`;
+    setText(q('bonus'), `+${w.bonus}`);
+    const btn = this.waveEl.querySelector('button') as HTMLButtonElement;
+    if (btn.disabled !== st.lost) btn.disabled = st.lost;
+    this.waveEl.classList.toggle('soon', w.nextIn <= 5);
   }
 }
