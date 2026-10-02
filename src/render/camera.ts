@@ -6,11 +6,11 @@ import { Projection } from './projection';
  */
 export class Camera {
   static readonly MIN_GRAIN = 0.9;
-  static readonly MAX_GRAIN = 3.6;
+  static readonly MAX_GRAIN = 1.4;
   /**
    * 默认档：人 19 个单位高，grain 2.2 时 42 个缓冲像素，放大 2 倍后约 84 个物理像素。
    */
-  static readonly DEFAULT_GRAIN = 2.2;
+  static readonly DEFAULT_GRAIN = 1.2;
   static readonly DEFAULT_MAGNIFY = 2;
 
   grain = Camera.DEFAULT_GRAIN;

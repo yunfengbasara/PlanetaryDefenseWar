@@ -79,9 +79,12 @@ export function bootDefense(app: Application): DefenseHandle {
       fit();
     }
     battle.update(dt);
+    // 缩放和平移都直接到位，不做缓动：grain 每变一点，整块地板落在哪些像素上就全变一次，
+    // 缓动的那半秒里画面会一格一格地爬、看着发抖。一步到位，每次滚轮只换一次像素网格。
     const h = home();
-    cam.grain += (userGrain - cam.grain) * Math.min(1, dt * 4);
-    cam.follow(h.x + pan.x, h.y + pan.y, Math.min(1, dt * 6));
+    cam.grain = userGrain;
+    cam.x = h.x + pan.x;
+    cam.y = h.y + pan.y;
     const s = battle.shake;
     const b = battle;
     scene.draw((layers, c) => b.draw(layers, c), (Math.random() - 0.5) * s * 5, (Math.random() - 0.5) * s * 5);
