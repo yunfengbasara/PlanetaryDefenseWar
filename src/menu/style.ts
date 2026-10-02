@@ -353,4 +353,44 @@ export const MENU_CSS = `
 .pdw-hint-bar i { display: block; height: 100%; width: 0; background: var(--blue-hi); }
 .pdw-hint-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .pdw-hint-actions .pdw-btn { height: 30px; padding: 0 12px; font-size: 12px; }
+
+/* ---------------------------------------------------------------- 局内 HUD */
+.pdw-hud {
+  position: absolute; inset: 12px 12px auto 12px; z-index: 5; pointer-events: none;
+  display: flex; justify-content: flex-end; align-items: flex-start;
+  color: var(--text); font: 13px/1.4 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  transition: opacity .2s;
+}
+.pdw-hud.hidden { opacity: 0; }
+.pdw-crystal {
+  display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px;
+  background: rgba(9, 14, 26, .86); border: 2px solid var(--line);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+.pdw-crystal svg { width: 16px; height: 16px; color: #5fd8e8; }
+.pdw-crystal b { min-width: 48px; font: 700 18px Consolas, monospace; color: #dff8ff; text-align: right; }
+.pdw-crystal em { font-style: normal; font-size: 12px; color: var(--muted); }
+
+/* ---------------------------------------------------------------- 失败结算 */
+.pdw-over {
+  position: absolute; inset: 0; z-index: 8; display: grid; place-items: center;
+  background: radial-gradient(ellipse at center, rgba(40, 6, 10, .55), rgba(3, 4, 8, .85));
+  color: var(--text); font: 14px/1.5 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  animation: pdw-fade .4s ease;
+}
+.pdw-over.hidden { display: none; }
+.pdw-over-panel {
+  position: relative; width: 380px; padding: 22px 26px 20px; text-align: center;
+  background: rgba(9, 14, 26, .94); border: 2px solid #8a2a34;
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+}
+.pdw-over-panel::before { content: ""; position: absolute; left: 0; top: 0; width: 80px; height: 3px; background: #e0505a; }
+.pdw-over-panel small { font: 700 11px Consolas, monospace; letter-spacing: 4px; color: #e0505a; }
+.pdw-over-panel h2 { margin: 4px 0 16px; font-size: 26px; letter-spacing: 6px; color: #fff; text-shadow: 2px 2px 0 #4a0e14; }
+.pdw-over-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 18px; }
+.pdw-over-stats div { display: flex; flex-direction: column; gap: 2px; padding: 8px; background: rgba(20, 30, 52, .6); border-left: 2px solid var(--line-hi); }
+.pdw-over-stats span { font-size: 11px; color: var(--muted); }
+.pdw-over-stats b { font: 700 20px Consolas, monospace; }
+.pdw-over-actions { display: flex; justify-content: center; gap: 10px; }
+.pdw-over-actions .pdw-btn { min-width: 130px; }
 `;

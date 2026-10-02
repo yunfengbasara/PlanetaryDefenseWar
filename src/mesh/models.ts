@@ -578,3 +578,40 @@ export function barracks(m: Mesh3, p: { t: number; door: number }, L: Livery = L
   }
   return m;
 }
+
+/**
+ * 水晶核心：六角形的金属基座、一圈蓝色装甲环、三根带灯的导流柱，上面悬着一颗慢慢转、
+ * 上下浮动的大水晶，旁边两小块碎晶绕着它转。原创造型。
+ * 占地约 36×36，水晶尖顶高约 44。t 是时间（秒）；hit 是挨打后的闪白（0..1）；broken 时只剩基座。
+ */
+export function crystalCore(m: Mesh3, p: { t: number; hit: number; broken?: boolean }, L: Livery = LIVERY_BLUE): Mesh3 {
+  const metal = L.base;
+  const dark = L.dark;
+  // 基座：两层六角台，上层蓝色装甲环。
+  m.prism('z', 0, 3, 0, 0, 18, lerpColor(metal, dark, 0.45), 6);
+  m.prism('z', 3, 6, 0, 0, 14, L.panel, 6);
+  m.prism('z', 6, 7, 0, 0, 9, dark, 6);
+  // 三根导流柱，顶上一盏灯。
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + Math.PI / 6;
+    const x = Math.cos(a) * 15;
+    const y = Math.sin(a) * 15;
+    m.box(x - 1.6, x + 1.6, y - 1.6, y + 1.6, 3, 14, metal);
+    m.box(x - 1.2, x + 1.2, y - 1.2, y + 1.2, 14, 16, L.glow, true);
+  }
+  if (p.broken) return m;
+  // 主水晶：上下浮动、慢慢自转；挨打时整颗闪白。
+  const bob = Math.sin(p.t * 1.6) * 3;
+  const gem = lerpColor(rgb(84, 206, 240), rgb(255, 255, 255), p.hit * 0.8);
+  m.push().translate(0, 0, 24 + bob).rotZ(p.t * 0.5);
+  m.gem(8.5, 16, 11, gem, 6);
+  m.pop();
+  // 两块碎晶绕着转，和主水晶反着浮。
+  for (let i = 0; i < 2; i++) {
+    const a = p.t * 1.1 + i * Math.PI;
+    m.push().translate(Math.cos(a) * 14, Math.sin(a) * 14, 22 - bob * 0.6).rotZ(-p.t * 1.5);
+    m.gem(2.4, 4.5, 3.2, lerpColor(rgb(130, 226, 250), rgb(255, 255, 255), p.hit * 0.8), 4);
+    m.pop();
+  }
+  return m;
+}

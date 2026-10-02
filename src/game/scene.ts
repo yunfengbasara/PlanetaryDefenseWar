@@ -4,14 +4,15 @@ import { type Kit, makeKit } from '../characters/kit';
 import { drawMarine } from '../characters/renderer';
 import { Pose, RigSpec } from '../characters/rig';
 import { Mesh3, drawMesh, drawShadow } from '../mesh/mesh';
-import { LIVERY_BLUE, aaTurret, barracks, battlecruiser, bomb, commandCenter, gunship, siegeTank, walkerMech } from '../mesh/models';
+import { LIVERY_BLUE, aaTurret, barracks, battlecruiser, bomb, commandCenter, crystalCore, gunship, siegeTank, walkerMech } from '../mesh/models';
 import type { Camera } from '../render/camera';
 import { type Rgba, rgb, rgba } from '../render/color';
 import { Projection } from '../render/projection';
+import { drawPixelText } from '../render/pixelFont';
 import { Projector } from '../render/projector';
 import type { Layers } from '../render/scene';
 import { fallPose, strideCycle, walkPose } from '../characters/poses';
-import { LANE_CX, drawFloor, spanAt } from './floor';
+import { LANE_CX, TOP_Y, drawFloor, spanAt } from './floor';
 import { PlatformGround } from './ground';
 import { type FieldDef, field } from './fields';
 import { BUG_LOOKS, BUG_SIZE, type BugKind, type BugLook, type SplatBlob, drawBug, drawSplat, makeSplat } from './bugs';
@@ -78,6 +79,23 @@ const CRUISER_SCALE = 1.4;
 /** 后方的两座建筑：兵营在左、指挥中心在右，正面朝镜头。 */
 const BARRACKS = v2(LANE_CX - 118, 690);
 const BASE_CC = v2(LANE_CX + 96, 694);
+
+/**
+ * 水晶核心：兵营和指挥中心中间、地图中轴上。突破防线的虫子会冲过来撞它，血打空这一局就输了。
+ * 下面几张表是先填的占位数值，之后再调。
+ */
+export const CORE = v2(LANE_CX, 700);
+/** 虫子离核心多近算撞上。 */
+const CORE_REACH = 16;
+const CORE_HP = 100;
+/** 每种虫撞一下核心扣多少血。 */
+const CORE_DMG: Record<BugKind, number> = { crawler: 4, hopper: 5, beetle: 12, flyer: 6, serpent: 10, spitter: 8 };
+/** 每种虫被打死给多少晶矿。 */
+const KILL_REWARD: Record<BugKind, number> = { crawler: 1, hopper: 2, beetle: 5, flyer: 3, serpent: 6, spitter: 4 };
+/** 核心血条：两排小方块，一排 CORE_PIPS 个，一块 = CORE_HP / (2 × CORE_PIPS)。 */
+const CORE_PIPS = 10;
+/** 核心碎掉时的碎晶颜色。 */
+const CORE_SHARDS = [rgb(84, 206, 240), rgb(170, 240, 255), rgb(40, 130, 190), rgb(255, 255, 255)];
 
 const MOON_DEBRIS = [rgb(150, 150, 156), rgb(120, 118, 126), rgb(176, 174, 180)];
 
@@ -397,6 +415,15 @@ export class DefenseScene {
   readonly bombs: Bomb[] = [];
   time = 0;
   shake = 0;
+  /** 局内晶矿：打死虫子就涨，之后拿来升级、建造。 */
+  crystals = 0;
+  coreHp = CORE_HP;
+  readonly coreMax = CORE_HP;
+  /** 核心挨打后的闪白（0..1）。 */
+  coreHit = 0;
+  /** 核心被打碎：不再刷虫，lostT 记碎了多久（外面据此弹结算）。 */
+  lost = false;
+  lostT = 0;
   private spawnAcc = 0;
   private planeCd = 4;
 
@@ -472,10 +499,12 @@ export class DefenseScene {
       { kind: 'aa', x: LANE_CX - 202, y: 600, yaw: -Math.PI / 2, aim: 0, pitch: 0.8, recoil: 0, cd: 1, barrel: 1, target: null, retarget: 0 },
       { kind: 'aa', x: LANE_CX + 202, y: 612, yaw: -Math.PI / 2, aim: 0, pitch: 0.8, recoil: 0, cd: 1.6, barrel: 1, target: null, retarget: 0 },
     );
-    for (let i = 0; i < this.field.initial; i++) this.spawn(30 + Math.random() * 360);
+    // 开局把整条通道（地图顶边到防线前）都铺上虫，上面不留空地。
+    for (let i = 0; i < this.field.initial; i++) this.spawn(TOP_Y + 10 + Math.random() * (LINE_Y - 90 - TOP_Y));
   }
 
-  private spawn(y = 20 + Math.random() * 40): void {
+  /** 新虫默认从地图顶边外面一点刷出来，走进画面。 */
+  private spawn(y = TOP_Y - 30 + Math.random() * 34): void {
     let r = Math.random();
     let kind: BugKind = 'crawler';
     for (const [k, w] of this.field.mix) {
@@ -547,6 +576,7 @@ export class DefenseScene {
     if (b.dead >= 0) return;
     b.hp -= dmg;
     if (b.hp > 0 && blast < 0.5) return;
+    if (!this.lost) this.crystals += KILL_REWARD[b.kind];
     const dx = b.x - fromX;
     const dy = b.y - fromY;
     const d = Math.hypot(dx, dy) || 1;
@@ -689,7 +719,9 @@ export class DefenseScene {
     this.time += dt;
     this.shake = Math.max(0, this.shake - dt * 2.5);
 
-    this.spawnAcc += dt * this.field.spawnRate;
+    this.coreHit = Math.max(0, this.coreHit - dt * 4);
+    if (this.lost) this.lostT += dt;
+    this.spawnAcc += this.lost ? 0 : dt * this.field.spawnRate;
     const alive = this.bugs.reduce((n, b) => n + (b.dead < 0 ? 1 : 0), 0);
     while (this.spawnAcc >= 1) {
       this.spawnAcc--;
@@ -717,14 +749,20 @@ export class DefenseScene {
       }
       this.moveBug(b, dt, ground);
       // 冲到防线前：扑上去咬最近的机枪兵一口，然后被近距离打倒（碎片和血往远离防线的方向溅）。
-      // 正面没人（那个位置的兵死了）就穿过缺口，一直冲到机甲巡逻线才被打倒。
+      // 正面没人（那个位置的兵死了）就穿过缺口；路过巡逻机甲脚边会被它顺手打掉，没碰上的就一路冲向核心。
       if (b.y > LINE_Y - 14 && b.kind !== 'flyer') {
         const m = this.marineNear(b.x, b.y, 20);
         if (m) {
           this.hurtMarine(m, BITE[b.kind] ?? 2, b.kind);
           this.hurt(b, 99, b.x, LINE_Y, 0);
-        } else if (b.y > LINE_Y + 26) this.hurt(b, 99, b.x, LINE_Y + 40, 0);
+          continue;
+        }
+        if (b.y > LINE_Y + 20 && b.y < LINE_Y + 60 && this.mechNear(b.x, b.y)) {
+          this.hurt(b, 99, b.x, LINE_Y + 40, 0);
+          continue;
+        }
       }
+      if (b.y > LINE_Y && Math.hypot(b.x - CORE.x, b.y - CORE.y) < CORE_REACH) this.crash(b);
     }
 
     this.updateDefenders(dt);
@@ -748,8 +786,10 @@ export class DefenseScene {
         const air = b.hop < 0.4;
         const u = b.hop / 0.4;
         b.lift = air ? 14 * 4 * u * (1 - u) : 0;
-        b.y += (air ? b.speed * 2.2 : 0) * dt;
-        b.x += wob * (air ? 2 : 0);
+        if (!this.toCore(b, (air ? b.speed * 2.2 : 0) * dt)) {
+          b.y += (air ? b.speed * 2.2 : 0) * dt;
+          b.x += wob * (air ? 2 : 0);
+        }
         b.phase = (b.phase + dt * 2) % 1;
         break;
       }
@@ -803,14 +843,18 @@ export class DefenseScene {
         break;
       }
       case 'flyer':
-        b.y += b.speed * dt;
-        b.x += wob;
+        if (!this.toCore(b, b.speed * dt)) {
+          b.y += b.speed * dt;
+          b.x += wob;
+        }
         b.lift = 50 + Math.sin(this.time * 1.7 + b.wobble) * 12;
         b.phase = (b.phase + (b.speed / 9) * dt) % 1;
         break;
       default:
-        b.y += b.speed * dt;
-        b.x += wob;
+        if (!this.toCore(b, b.speed * dt)) {
+          b.y += b.speed * dt;
+          b.x += wob;
+        }
         b.phase = (b.phase + (b.speed / 9) * dt) % 1;
     }
     // 地面上的虫只能在平台上走；飞虫可以飞到虚空上面去。
@@ -1073,6 +1117,58 @@ export class DefenseScene {
   }
 
   /** 离 (x, y) 最近的活着的机枪兵，限定横向距离。 */
+  /** 过了防线的虫直奔核心：朝核心走 step 这么远。还没过防线就什么都不做，返回 false。 */
+  private toCore(b: Bug, step: number): boolean {
+    if (b.y <= LINE_Y + 10) return false;
+    const dx = CORE.x - b.x;
+    const dy = CORE.y - b.y;
+    const d = Math.hypot(dx, dy) || 1;
+    b.x += (dx / d) * Math.min(step, d);
+    b.y += (dy / d) * Math.min(step, d);
+    return true;
+  }
+
+  private mechNear(x: number, y: number): boolean {
+    return this.defenders.some((d) => d.kind === 'mech' && Math.abs(d.x - x) < 26 && Math.abs(d.y - y) < 24);
+  }
+
+  /** 虫撞上核心：扣核心的血，虫自己炸成一摊（不给晶矿）。 */
+  private crash(b: Bug): void {
+    if (this.lost) return;
+    this.coreHp = Math.max(0, this.coreHp - CORE_DMG[b.kind]);
+    this.coreHit = 1;
+    this.shake = Math.min(1, this.shake + 0.12);
+    this.splats.push({ x: b.x, y: b.y, t: 0, blobs: makeSplat(3 + BUG_SIZE[b.kind] * 2.4, b.x - CORE.x, b.y - CORE.y, true), blood: b.look.blood });
+    this.shatter(b, (b.x - CORE.x) / CORE_REACH, (b.y - CORE.y) / CORE_REACH, 0.3);
+    b.dead = 99;
+    if (this.coreHp <= 0) this.breakCore();
+  }
+
+  /** 核心碎了：一声大爆炸，水晶碎片往四周飞，这一局结束。 */
+  private breakCore(): void {
+    this.lost = true;
+    this.lostT = 0;
+    this.explode(CORE.x, CORE.y, 3);
+    this.shake = 1;
+    for (let i = 0; i < 40; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 40 + Math.random() * 110;
+      this.shards.push({
+        x: CORE.x,
+        y: CORE.y,
+        z: 24,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        vz: 60 + Math.random() * 120,
+        rot: Math.random() * 6,
+        spin: (Math.random() - 0.5) * 20,
+        size: 1 + Math.random() * 2.2,
+        color: CORE_SHARDS[Math.floor(Math.random() * CORE_SHARDS.length)],
+        t: 0,
+      });
+    }
+  }
+
   private marineNear(x: number, y: number, reach: number): Defender | null {
     let best: Defender | null = null;
     let bd = reach;
@@ -1424,6 +1520,55 @@ export class DefenseScene {
     return v3(lerp(s.from.x, s.to.x, u), lerp(s.from.y, s.to.y, u), lerp(s.from.z, s.to.z, u) + s.arc * 4 * u * (1 - u));
   }
 
+  /** 水晶核心：地上一圈呼吸的青光，基座和浮着的水晶；碎了就只剩基座。 */
+  private drawCore(ground: Layers['ground'], units: Layers['units'], fx: Layers['fx'], cam: Camera): void {
+    const g = cam.grain;
+    const sq = Projection.groundSquash;
+    const foot = cam.worldToScreen(CORE.x, CORE.y);
+    if (!this.lost) {
+      const pulse = 0.5 + 0.5 * Math.sin(this.time * 2.2);
+      ground.ellipse(foot, 34 * g, 34 * g * sq, 0, rgba(110, 220, 255, Math.round(22 + 22 * pulse + 60 * this.coreHit)), 9.5e5);
+      ground.ellipse(foot, 22 * g, 22 * g * sq, 0, rgba(150, 236, 255, Math.round(30 + 26 * pulse)), 9.5e5 + 1);
+    }
+    const m = crystalCore(new Mesh3().translate(CORE.x, CORE.y, 0), { t: this.time, hit: this.coreHit, broken: this.lost }, LIVERY_BLUE);
+    drawShadow(ground, cam, m, 0, 9e5, 60);
+    drawMesh(units, cam, m, CORE);
+    if (!this.lost) {
+      const tip = cam.worldToScreenZ(CORE.x, CORE.y, 40 + Math.sin(this.time * 1.6) * 3);
+      fx.disc(tip, Math.max(1, g * (1.2 + 0.6 * Math.sin(this.time * 5))), rgba(230, 255, 255, 200), 9);
+      this.drawCoreBar(fx, cam);
+    }
+  }
+
+  /**
+   * 核心血条：画在基座正下方，和机枪兵头顶那排一个画法 —— 小方块、暗底框、剩得多绿、过半黄、
+   * 最后一截红，只是两排；再往下是像素数字的读数。挨打时底框闪白。
+   */
+  private drawCoreBar(fx: Layers['fx'], cam: Camera): void {
+    const g = cam.grain;
+    const at = cam.worldToScreenZ(CORE.x, CORE.y + 26, 0);
+    const total = CORE_PIPS * 2;
+    const n = Math.ceil((clamp(this.coreHp, 0, this.coreMax) / this.coreMax) * total);
+    const sz = Math.max(2, Math.round(1.9 * g));
+    const gap = Math.max(1, Math.round(0.5 * g));
+    const span = CORE_PIPS * sz + (CORE_PIPS - 1) * gap;
+    const rows = 2 * sz + gap;
+    const k = n / total;
+    const on = k > 0.6 ? rgb(110, 230, 110) : k > 0.3 ? rgb(245, 205, 60) : rgb(240, 70, 50);
+    const frame = this.coreHit > 0.5 ? rgba(230, 250, 255, 230) : rgba(8, 10, 16, 210);
+    fx.rect(at, span + 2, rows + 2, 0, frame, 20);
+    // 第一排是前一半血、第二排是后一半：从上排左边开始掉。
+    for (let i = 0; i < total; i++) {
+      const row = i < CORE_PIPS ? 0 : 1;
+      const col = i % CORE_PIPS;
+      const c = v2(at.x - span / 2 + sz / 2 + col * (sz + gap), at.y - rows / 2 + sz / 2 + row * (sz + gap));
+      const lit = total - 1 - i < n;
+      fx.rect(c, sz, sz, 0, lit ? on : rgba(70, 76, 90, 230), 20.01);
+    }
+    const px = Math.max(1, Math.round(0.8 * g));
+    drawPixelText(fx, `${Math.ceil(this.coreHp)}/${this.coreMax}`, v2(at.x, at.y + rows / 2 + 2 + px * 3.5), px, rgb(220, 236, 255), rgba(8, 10, 16, 220), 20.02);
+  }
+
   private drawCruiser(units: Layers['units'], fx: Layers['fx'], cam: Camera): void {
     const c = this.cruiser;
     const g = cam.grain;
@@ -1573,6 +1718,7 @@ export class DefenseScene {
       const cm = commandCenter(new Mesh3().translate(BASE_CC.x, BASE_CC.y, 0).rotZ(Math.PI / 2), { t: this.time }, LIVERY_BLUE);
       drawShadow(ground, cam, cm, 0, 9e5, 70);
       drawMesh(units, cam, cm, BASE_CC);
+      this.drawCore(ground, units, fx, cam);
     }
 
     if (this.field.cruiser) this.drawCruiser(units, fx, cam);

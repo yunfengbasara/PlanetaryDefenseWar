@@ -238,6 +238,25 @@ export class Mesh3 {
     return this;
   }
 
+  /**
+   * 双锥（水晶）：腰上一圈 sides 个点，往上收成 top 高的尖、往下收成 bottom 深的尖。
+   * 每个小三角面单独一档明暗，转起来一闪一闪的。
+   */
+  gem(r: number, top: number, bottom: number, color: Rgba, sides = 6): this {
+    const ring = Array.from({ length: sides }, (_, i) => {
+      const a = (i / sides) * Math.PI * 2;
+      return v3(Math.cos(a) * r, Math.sin(a) * r, 0);
+    });
+    const inside = v3(0, 0, 0);
+    for (let i = 0; i < sides; i++) {
+      const a = ring[i];
+      const b = ring[(i + 1) % sides];
+      this.face([a, b, v3(0, 0, top)], color, inside);
+      this.face([b, a, v3(0, 0, -bottom)], color, inside);
+    }
+    return this;
+  }
+
   /** 一块单面的板（标志、窗户、旗子）：两面都算，永远看得见。 */
   plate(pts: Vec3[], color: Rgba, glow = false): this {
     const n = pts.length;

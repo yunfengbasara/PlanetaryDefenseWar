@@ -20,7 +20,7 @@ export const LANE_CX = 330;
 /** 从哪一行开始变宽（落在 20 的格线上，斜边才能逐格对齐）。 */
 const WIDEN_Y = 500;
 /** 平台的首尾。 */
-export const TOP_Y = -400;
+export const TOP_Y = 0;
 export const END_Y = 900;
 
 export const T = 20;
