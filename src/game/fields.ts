@@ -8,7 +8,7 @@ import type { BugKind } from './bugs';
  * 开局前 useField() 切过去就行。主界面画预览时临时切过去、画完切回来。
  */
 
-export type Theme = 'space' | 'desert' | 'ice' | 'moon' | 'hive';
+export type Theme = 'space' | 'desert' | 'ice' | 'moon' | 'hive' | 'starship';
 
 export interface FieldDef {
   id: string;
@@ -25,6 +25,8 @@ export interface FieldDef {
   /** 侧面的战列巡航舰、从下往上掠过的炮艇。 */
   cruiser: boolean;
   gunships: boolean;
+  /** 地图在通道最宽处之外还有多宽的可看内容（镜头横向能拖到哪儿）。默认 30。 */
+  edge?: number;
 }
 
 export const FIELDS: Record<string, FieldDef> = {
@@ -122,6 +124,27 @@ export const FIELDS: Record<string, FieldDef> = {
     ],
     cruiser: false,
     gunships: true,
+  },
+  /** 06 星舰甲板：在一艘全速航行的巨舰背上打。两侧是往下弯的船舷和引擎舱，掉下去的东西甩进太空。 */
+  'starship-deck': {
+    id: 'starship-deck',
+    theme: 'starship',
+    narrow: 170,
+    wide: 235,
+    spawnRate: 22,
+    maxAlive: 540,
+    initial: 320,
+    mix: [
+      ['crawler', 0.5],
+      ['hopper', 0.12],
+      ['beetle', 0.08],
+      ['flyer', 0.14],
+      ['serpent', 0.06],
+      ['spitter', 0.1],
+    ],
+    cruiser: true,
+    gunships: true,
+    edge: 150,
   },
   /** 05 虫巢核心：最难。虫多、刷得快，重甲和远程比例最高。 */
   'hive-core': {

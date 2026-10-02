@@ -12,7 +12,7 @@ import { drawPixelText } from '../render/pixelFont';
 import { Projector } from '../render/projector';
 import type { Layers } from '../render/scene';
 import { fallPose, strideCycle, walkPose } from '../characters/poses';
-import { LANE_CX, TOP_Y, drawFloor, spanAt } from './floor';
+import { CORE, LANE_CX, TOP_Y, drawFloor, spanAt } from './floor';
 import { PlatformGround } from './ground';
 import { type FieldDef, field } from './fields';
 import { BUG_LOOKS, BUG_SIZE, type BugKind, type BugLook, type SplatBlob, drawBug, drawSplat, makeSplat } from './bugs';
@@ -84,7 +84,7 @@ const BASE_CC = v2(LANE_CX + 96, 694);
  * 水晶核心：兵营和指挥中心中间、地图中轴上。突破防线的虫子会冲过来撞它，血打空这一局就输了。
  * 下面几张表是先填的占位数值，之后再调。
  */
-export const CORE = v2(LANE_CX, 700);
+export { CORE };
 /** 虫子离核心多近算撞上。 */
 const CORE_REACH = 16;
 const CORE_HP = 100;

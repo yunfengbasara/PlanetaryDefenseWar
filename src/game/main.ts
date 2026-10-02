@@ -58,9 +58,10 @@ export function bootDefense(app: Application): DefenseHandle {
     const h = home();
     const homeHalfW = cam.viewWidth / 2 / h.grain;
     const wide = field().wide;
+    const edge = field().edge ?? 30;
     return {
-      l: Math.min(LANE_CX - wide - 30, h.x - homeHalfW),
-      r: Math.max(LANE_CX + wide + 30, h.x + homeHalfW),
+      l: Math.min(LANE_CX - wide - edge, h.x - homeHalfW),
+      r: Math.max(LANE_CX + wide + edge, h.x + homeHalfW),
       t: TOP_Y,
       b: END_Y + 20,
     };

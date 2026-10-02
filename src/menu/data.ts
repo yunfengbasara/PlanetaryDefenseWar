@@ -153,6 +153,23 @@ export const MAPS: MapInfo[] = [
     ],
     enemies: enemies('beetle', 'spitter', 'serpent', 'crawler', 'hopper', 'flyer'),
   },
+  {
+    id: 'starship-deck',
+    field: 'starship-deck',
+    index: '06',
+    name: '远征号甲板',
+    code: 'STARSHIP DECK · ODYSSEY',
+    locked: false,
+    difficulty: 4,
+    desc: '在一艘全速航行的巨型星舰背上迎战。虫群从船头方向扑来，中轴的能量导管直通水晶核心；两侧船舷外就是呼啸而过的星空，飞虫格外多。',
+    stats: [
+      { label: '战区类型', value: '舰上防御' },
+      { label: '敌群规模', value: '无尽' },
+      { label: '推荐时长', value: '6 分钟' },
+      { label: '首通奖励', value: '2,800' },
+    ],
+    enemies: enemies('crawler', 'flyer', 'hopper', 'spitter', 'beetle', 'serpent'),
+  },
 ];
 
 export const SHOP_ITEMS = [

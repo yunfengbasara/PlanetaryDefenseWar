@@ -53,7 +53,7 @@ interface SurfaceStyle {
   tracks: boolean;
 }
 
-const STYLES: Record<Exclude<Theme, 'space'>, SurfaceStyle> = {
+const STYLES: Record<Exclude<Theme, 'space' | 'starship'>, SurfaceStyle> = {
   desert: {
     base: rgb(214, 172, 116),
     light: rgb(234, 200, 146),
@@ -162,7 +162,7 @@ const PAD_Y = 540;
 
 export function drawSurface(s: ShapeBatch, cam: Camera, time: number): void {
   const theme = field().theme;
-  if (theme === 'space') return;
+  if (theme === 'space' || theme === 'starship') return;
   const st = STYLES[theme];
   const W = cam.viewWidth;
   const H = cam.viewHeight;

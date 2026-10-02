@@ -3,6 +3,7 @@ import type { Camera } from '../render/camera';
 import { type Rgba, lerpColor, rgb, rgba } from '../render/color';
 import { Projection } from '../render/projection';
 import type { ShapeBatch } from '../render/shapeBatch';
+import { drawStarship } from './starship';
 import { drawSurface } from './surface';
 import { field } from './fields';
 
@@ -24,6 +25,9 @@ export const TOP_Y = 0;
 export const END_Y = 900;
 
 export const T = 20;
+
+/** 水晶核心的位置：兵营和指挥中心中间、地图中轴上（scene.ts 管它的逻辑，地形有的要围着它画）。 */
+export const CORE = v2(LANE_CX, 700);
 
 /** 某一行通道的左右边界：前方是当前战场的 narrow，过了 WIDEN_Y 放宽到 wide。 */
 export function spanAt(y: number): [number, number] {
@@ -144,6 +148,10 @@ export function hazard(s: ShapeBatch, cam: Camera, x0: number, y0: number, x1: n
 }
 
 export function drawFloor(s: ShapeBatch, cam: Camera, time: number): void {
+  if (field().theme === 'starship') {
+    drawStarship(s, cam, time);
+    return;
+  }
   if (field().theme !== 'space') {
     drawSurface(s, cam, time);
     return;
