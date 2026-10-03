@@ -44,6 +44,10 @@ export interface DefenseHandle {
   nextWave(): number;
   /** 选中的建筑变了（点到建筑 / 点到空地）。 */
   onSelect(fn: (id: number | null) => void): void;
+  /** 按 Esc 时没有要取消的（不在放置、没选中东西）就调这些（外面拿来开暂停界面）。 */
+  onEscape(fn: () => void): void;
+  /** 暂停：战场不再推进（画面照画，镜头照样能拖）。 */
+  setPaused(paused: boolean): void;
   /** 引导遮罩用：建造区在舞台上的矩形。CSS 像素。 */
   buildAreaRect(): CssRect | null;
   /** 某种出兵建筑（第一座）连同它整个集结点范围在舞台上的矩形。 */
@@ -182,6 +186,9 @@ export function bootDefense(app: Application): DefenseHandle {
     const r = app.canvas.getBoundingClientRect();
     return cam.screenToWorld(scene.cssToBuffer(e.clientX - r.left), scene.cssToBuffer(e.clientY - r.top));
   };
+  const escapeHooks: (() => void)[] = [];
+  /** 暂停中：战场不推进。 */
+  let paused = false;
   const select = (id: number | null): void => {
     if (!battle) return;
     battle.selected = id;
@@ -264,7 +271,8 @@ export function bootDefense(app: Application): DefenseHandle {
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && battle) {
       if (placing) cancelPlace();
-      else select(null);
+      else if (battle.selected !== null && !paused) select(null);
+      else for (const fn of escapeHooks) fn();
     }
   });
   app.canvas.addEventListener(
@@ -293,7 +301,7 @@ export function bootDefense(app: Application): DefenseHandle {
       const z = cam.screenToWorld(cam.viewWidth, cam.viewHeight);
       battle.view = { l: a.x, t: a.y, r: z.x, b: z.y };
     }
-    if (!(battle.lost && battle.lostT > LOST_FREEZE)) battle.update(dt);
+    if (!paused && !(battle.lost && battle.lostT > LOST_FREEZE)) battle.update(dt);
     // 钱被花掉了（比如刚升级）：虚影跟着变红。
     if (battle.ghost && placing) battle.ghost.valid = battle.placeable(placing, battle.ghost.x, battle.ghost.y) && battle.crystals >= BUILDS[placing].cost;
     // 缩放和平移都直接到位，不做缓动：grain 每变一点，整块地板落在哪些像素上就全变一次，
@@ -312,6 +320,7 @@ export function bootDefense(app: Application): DefenseHandle {
 
   return {
     start: (fieldId) => {
+      paused = false;
       useField(fieldId);
       battle = new DefenseScene();
       placing = null;
@@ -398,6 +407,10 @@ export function bootDefense(app: Application): DefenseHandle {
     startWaves: () => battle?.startWaves(),
     nextWave: () => battle?.callNextWave() ?? -1,
     onSelect: (fn) => selectHooks.push(fn),
+    onEscape: (fn) => escapeHooks.push(fn),
+    setPaused: (p) => {
+      paused = p;
+    },
     rallyAreaRect: (kind) => {
       const s = battle?.structures.find((o) => o.kind === kind);
       if (!s) return null;

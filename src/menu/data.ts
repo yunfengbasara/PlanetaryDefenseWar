@@ -91,7 +91,7 @@ export const MAPS: MapInfo[] = [
     enemies: enemies('crawler', 'hopper'),
     hints: [
       { text: '欢迎来到新兵训练场！这里还什么都没有，虫群也暂时不会来。先用晶矿把防线建起来。' },
-      { text: '你有 200 晶矿。点击这里的「兵营」（或按数字键 1）。', wait: 'placing-barracks', target: 'build:barracks' },
+      { text: '你有 1400 晶矿。点击这里的「兵营」（或按数字键 1）。', wait: 'placing-barracks', target: 'build:barracks' },
       { text: '把兵营移到亮出来的基地空地上：绿色表示可以建造，红色不行。左键放下，右键或 Esc 取消。', wait: 'built-barracks', target: 'area:base' },
       { text: '选中兵营，在亮出的范围里右键点地面，设置集结点。', wait: 'rally', target: 'rally:barracks' },
       { text: '兵营会自动出兵，点击建筑可以升级。打死虫子能获得晶矿；右上角的「下一波」可以提前叫虫，多拿晶矿。守住水晶核心！' },

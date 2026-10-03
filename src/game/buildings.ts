@@ -49,22 +49,24 @@ export interface BuildDef {
 }
 
 /**
- * 升级线：每条 4 级（Lv1 是造好时的样子，再升 3 次）。
+ * 升级线：每条 4 级（Lv1 是造好时的样子，再升 3 次）。最后一级是"突破"：一下跳一大截，比前面每级加得多得多
+ * （升满一条线有明显的回报）。
  *
- *   攻击力    ×1 → 1.5 → 2.2 → 3.2     每级大约 +50%，越往后加得越多（打后期的大群全靠它）
- *   射速      ×1 → 1.2 → 1.45 → 1.75
- *   射程      ×1 → 1.1 → 1.2 → 1.3     射程加太多会让炮台在后方就把虫清光，所以加得最少
- *   生产速度  ×1 → 1.25 → 1.55 → 1.9
+ *   攻击力    ×1 → 1.5 → 2.2 →（突破）4
+ *   射速      ×1 → 1.4 → 1.9 →（突破）3.2
+ *   射程      ×1 → 1.1 → 1.2 →（突破）1.45   射程加太多会让炮台在后方就把虫清光，所以加得最少
+ *   生产速度  ×1 → 1.25 → 1.55 →（突破）2.4
+ *   人数      兵营 5 → 7 → 9 →（突破）14，车间 1 → 2 → 3 →（突破）5
  *
  * 价钱按建筑造价走：第 2、3、4 级分别是造价的 0.6、1.2、2.4 倍（每级翻一倍），取整到 10。
  * 数量线单独写在各建筑里。
  */
 const tier = (cost: number): number[] => [0.6, 1.2, 2.4].map((k) => Math.round((cost * k) / 10) * 10);
-const DMG = (cost: number): StatDef => ({ key: 'dmg', name: '攻击力', values: [1, 1.5, 2.2, 3.2], costs: tier(cost) });
-const RANGE = (cost: number): StatDef => ({ key: 'range', name: '射程', values: [1, 1.1, 1.2, 1.3], costs: tier(cost * 0.8) });
-const RATE = (cost: number): StatDef => ({ key: 'rate', name: '射速', values: [1, 1.2, 1.45, 1.75], costs: tier(cost) });
+const DMG = (cost: number): StatDef => ({ key: 'dmg', name: '攻击力', values: [1, 1.5, 2.2, 4], costs: tier(cost) });
+const RANGE = (cost: number): StatDef => ({ key: 'range', name: '射程', values: [1, 1.1, 1.2, 1.45], costs: tier(cost * 0.8) });
+const RATE = (cost: number): StatDef => ({ key: 'rate', name: '射速', values: [1, 1.4, 1.9, 3.2], costs: tier(cost) });
 /** 生产速度：造一个单位的时间除以这个倍率。 */
-const SPEED = (cost: number): StatDef => ({ key: 'speed', name: '生产速度', values: [1, 1.25, 1.55, 1.9], costs: tier(cost * 0.8) });
+const SPEED = (cost: number): StatDef => ({ key: 'speed', name: '生产速度', values: [1, 1.25, 1.55, 2.4], costs: tier(cost * 0.8) });
 
 export const BUILDS: Record<BuildKind, BuildDef> = {
   barracks: {
@@ -78,7 +80,7 @@ export const BUILDS: Record<BuildKind, BuildDef> = {
     top: 38,
     time: 4,
     unit: '士兵',
-    stats: [{ key: 'count', name: '士兵数量', values: [5, 7, 9, 12], costs: [200, 400, 800] }, SPEED(150), DMG(150), RANGE(150), RATE(150)],
+    stats: [{ key: 'count', name: '士兵数量', values: [5, 7, 9, 14], costs: [200, 400, 800] }, SPEED(150), DMG(150), RANGE(150), RATE(150)],
   },
   factory: {
     kind: 'factory',
@@ -91,7 +93,7 @@ export const BUILDS: Record<BuildKind, BuildDef> = {
     top: 56,
     time: 10,
     unit: '机甲',
-    stats: [{ key: 'count', name: '机甲数量', values: [1, 2, 3, 4], costs: [400, 800, 1600] }, SPEED(300), DMG(300), RANGE(300), RATE(300)],
+    stats: [{ key: 'count', name: '机甲数量', values: [1, 2, 3, 5], costs: [400, 800, 1600] }, SPEED(300), DMG(300), RANGE(300), RATE(300)],
   },
   tank: {
     kind: 'tank',

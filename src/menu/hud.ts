@@ -6,6 +6,7 @@ import type { BattleState } from '../game/main';
  *   右上角   波次面板（当前第几波、场上还剩多少虫；下一波第几波、多少只、倒计时；"下一波"按钮，
  *            提前叫按剩余秒数给晶矿，上一波刚来时要等几秒才能再叫）→ 晶矿数 → 本局挣到的信用点 → （外面挂上来的）建造列表
  *   上方正中 每来一波闪一行"第 N 波来袭"；刚突破里程碑的话下面再加一行"突破第 N 波 · 信用点 +M"
+ *   暂停     局内按 Esc（没在放建筑、没选中东西时）弹：继续游戏 / 重新开始 / 返回主界面，再按 Esc 也是继续
  *   结算     核心碎了（失败）或者打完最后一波（通关）之后弹：用时、波次、本局信用点（通关再加首通奖励）；
  *            重新开始 / 返回主界面
  *
@@ -28,6 +29,8 @@ export interface HudActions {
   quit(): void;
   /** 提前叫下一波。 */
   nextWave(): void;
+  /** 暂停界面上点"继续游戏"。 */
+  resume(): void;
 }
 
 const clock = (sec: number): string => {
@@ -43,6 +46,7 @@ const setText = (el: Element, text: string): void => {
 export class Hud {
   private readonly bar = document.createElement('div');
   private readonly over = document.createElement('div');
+  private readonly pause = document.createElement('div');
   private readonly banner = document.createElement('div');
   private readonly crystalText: HTMLElement;
   private readonly creditText: HTMLElement;
@@ -95,9 +99,36 @@ export class Hud {
     this.over.querySelector('[data-act=restart]')!.addEventListener('click', () => actions.restart());
     this.over.querySelector('[data-act=quit]')!.addEventListener('click', () => actions.quit());
 
+    this.pause.className = 'pdw-over pdw-pause hidden';
+    this.pause.innerHTML = `
+      <div class="pdw-over-panel">
+        <small>PAUSED</small>
+        <h2>游戏暂停</h2>
+        <div class="pdw-pause-actions">
+          <button class="pdw-btn" data-act="resume"><span>继续游戏</span></button>
+          <button class="pdw-btn ghost" data-act="restart"><span>重新开始</span></button>
+          <button class="pdw-btn ghost" data-act="quit"><span>返回主界面</span></button>
+        </div>
+        <p class="pdw-pause-tip">按 Esc 继续</p>
+      </div>`;
+    this.pause.querySelector('[data-act=resume]')!.addEventListener('click', () => actions.resume());
+    this.pause.querySelector('[data-act=restart]')!.addEventListener('click', () => actions.restart());
+    this.pause.querySelector('[data-act=quit]')!.addEventListener('click', () => actions.quit());
+
     host.appendChild(this.bar);
     host.appendChild(this.banner);
     host.appendChild(this.over);
+    host.appendChild(this.pause);
+  }
+
+  /** 结算面板弹出来了没有（弹了就不能再暂停）。 */
+  get isOver(): boolean {
+    return this.overShown;
+  }
+
+  /** 显示 / 收起暂停界面。 */
+  setPaused(on: boolean): void {
+    this.pause.classList.toggle('hidden', !on);
   }
 
   /** 把别的面板（建造列表）挂在晶矿下面。 */
@@ -108,6 +139,7 @@ export class Hud {
   show(): void {
     this.bar.classList.remove('hidden');
     this.over.classList.add('hidden');
+    this.pause.classList.add('hidden');
     this.banner.classList.add('hidden');
     this.overShown = false;
     this.clearReward = 0;
@@ -120,6 +152,7 @@ export class Hud {
   hide(): void {
     this.bar.classList.add('hidden');
     this.over.classList.add('hidden');
+    this.pause.classList.add('hidden');
     this.banner.classList.add('hidden');
     this.overShown = false;
   }
@@ -174,7 +207,7 @@ export class Hud {
       k('timeLabel', won ? '用时' : '坚守时间');
       k('time', `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`);
       k('waveLabel', won ? '击退' : '坚持到');
-      k('wave', won ? `${st.wave.total} 波` : `第 ${st.wave.current} / ${st.wave.total} 波`);
+      k('wave', won ? `${st.wave.total} 波` : `第 ${st.wave.current}/${st.wave.total} 波`);
       k('credits', `+${(st.credits + (won ? this.clearReward : 0)).toLocaleString()}`);
       this.over.classList.remove('hidden');
     }

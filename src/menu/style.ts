@@ -451,9 +451,19 @@ export const MENU_CSS = `
 .pdw-over-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 18px; }
 .pdw-over-stats div { display: flex; flex-direction: column; gap: 2px; padding: 8px; background: rgba(20, 30, 52, .6); border-left: 2px solid var(--line-hi); }
 .pdw-over-stats span { font-size: 11px; color: var(--muted); }
-.pdw-over-stats b { font: 700 20px Consolas, monospace; }
+.pdw-over-stats b { font: 700 20px Consolas, "Microsoft YaHei", monospace; white-space: nowrap; }
+.pdw-over-stats span { white-space: nowrap; }
 .pdw-over-actions { display: flex; justify-content: center; gap: 10px; }
 .pdw-over-actions .pdw-btn { min-width: 130px; }
+/* 暂停界面：沿用结算的面板，底色换成中性的深蓝；三个按钮竖排。 */
+.pdw-pause { background: radial-gradient(ellipse at center, rgba(10, 18, 36, .55), rgba(3, 4, 8, .82)); }
+.pdw-pause .pdw-over-panel { width: 300px; border-color: var(--line-hi); }
+.pdw-pause .pdw-over-panel::before { background: var(--blue-hi); }
+.pdw-pause .pdw-over-panel small { color: var(--blue-hi); }
+.pdw-pause .pdw-over-panel h2 { text-shadow: 2px 2px 0 #0c1630; }
+.pdw-pause-actions { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+.pdw-pause-actions .pdw-btn { justify-content: center; }
+.pdw-pause-tip { margin: 12px 0 0; font-size: 11px; color: var(--muted); }
 
 /* ---------------------------------------------------------------- 建造列表 */
 .pdw-build { display: flex; flex-direction: column; gap: 6px; pointer-events: auto; transition: opacity .2s; }

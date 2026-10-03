@@ -35,7 +35,10 @@ export interface FieldDef {
   cruiser: boolean;
   /** 地图在通道最宽处之外还有多宽的可看内容（镜头横向能拖到哪儿）。默认 30。 */
   edge?: number;
-  /** 初始晶矿。 */
+  /**
+   * 初始晶矿：每张图都至少够把四种基本建筑（兵营 150 + 机器人车间 300 + 坦克 200 + 火炮 250 = 900）各买一座，
+   * 再多给 500 打底，越难的图给得越多：00 1400、01 1500、02 / 03 1600、04 / 06 1700、07 1800、05 2000。巨舰不算在内。
+   */
   startCrystals: number;
   /**
    * 地图布局：lane（默认）= 虫从上方顺着一条通道下来、防线横在中间；
@@ -45,7 +48,7 @@ export interface FieldDef {
 }
 
 export const FIELDS: Record<string, FieldDef> = {
-  /** 00 新兵训练场：建造模式。通道很窄，开局空地图 + 200 晶矿，只来小爬虫和跳虫，节奏慢。 */
+  /** 00 新兵训练场：建造模式。通道很窄，开局空地图 + 1400 晶矿，只来小爬虫和跳虫，节奏慢。 */
   'training-ground': {
     id: 'training-ground',
     theme: 'space',
@@ -61,7 +64,7 @@ export const FIELDS: Record<string, FieldDef> = {
       ['hopper', 0.18],
     ],
     cruiser: true,
-    startCrystals: 200,
+    startCrystals: 1400,
   },
   /** 01 轨道平台 α：原来那张图。 */
   'orbital-alpha': {
@@ -83,7 +86,7 @@ export const FIELDS: Record<string, FieldDef> = {
       ['spitter', 0.11],
     ],
     cruiser: true,
-    startCrystals: 500,
+    startCrystals: 1500,
   },
   /** 02 赤沙峡谷：一条宽峡谷，甲虫和喷酸虫多，地上落的东西不会掉进虚空。 */
   'red-sand-canyon': {
@@ -105,7 +108,7 @@ export const FIELDS: Record<string, FieldDef> = {
       ['spitter', 0.18],
     ],
     cruiser: true,
-    startCrystals: 500,
+    startCrystals: 1600,
   },
   /** 03 静海月面：低重力，跳虫多；没有大气，所以没有飞虫。 */
   'lunar-surface': {
@@ -126,7 +129,7 @@ export const FIELDS: Record<string, FieldDef> = {
       ['spitter', 0.11],
     ],
     cruiser: true,
-    startCrystals: 500,
+    startCrystals: 1600,
   },
   /** 04 冰封前哨：通道更宽，刺蛇多；落雪。没有巡航舰支援，只有炮艇。 */
   'frost-outpost': {
@@ -148,7 +151,7 @@ export const FIELDS: Record<string, FieldDef> = {
       ['spitter', 0.1],
     ],
     cruiser: false,
-    startCrystals: 550,
+    startCrystals: 1700,
   },
   /** 06 星舰甲板：在一艘全速航行的巨舰背上打。两侧是往下弯的船舷和引擎舱，掉下去的东西甩进太空。 */
   'starship-deck': {
@@ -170,7 +173,7 @@ export const FIELDS: Record<string, FieldDef> = {
       ['spitter', 0.1],
     ],
     cruiser: true,
-    startCrystals: 550,
+    startCrystals: 1700,
     edge: 150,
   },
   /** 07 十字高地：建造模式，核心在正中的高台上，四条路四个方向来虫。刺蛇、喷酸虫先不出（它们的攻击是按"防线在正前方"写的）。 */
@@ -192,7 +195,7 @@ export const FIELDS: Record<string, FieldDef> = {
       ['flyer', 0.15],
     ],
     cruiser: true,
-    startCrystals: 600,
+    startCrystals: 1800,
   },
   /** 05 虫巢核心：最难。通道和基地一样宽，虫多、刷得快，重甲和远程比例最高。 */
   'hive-core': {
@@ -214,7 +217,7 @@ export const FIELDS: Record<string, FieldDef> = {
       ['spitter', 0.14],
     ],
     cruiser: true,
-    startCrystals: 600,
+    startCrystals: 2000,
   },
 };
 

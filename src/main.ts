@@ -23,7 +23,16 @@ createApp().then((app) => {
   back.innerHTML = '<span>◀ 主界面</span>';
   stage.appendChild(back);
 
+  /** 暂停：战场停住、弹暂停界面。 */
+  let paused = false;
+  const setPaused = (on: boolean): void => {
+    paused = on;
+    game.setPaused(on);
+    hud.setPaused(on);
+  };
+
   const play = (map: MapInfo): void => {
+    setPaused(false);
     current = map;
     banked = 0;
     cleared = false;
@@ -42,6 +51,7 @@ createApp().then((app) => {
     else game.startWaves();
   };
   const quit = (): void => {
+    setPaused(false);
     current = null;
     game.stop();
     hints.stop();
@@ -56,12 +66,18 @@ createApp().then((app) => {
     restart: () => current && play(current),
     quit,
     nextWave: () => game.nextWave(),
+    resume: () => setPaused(false),
   });
   const build = new BuildPanel(app, game);
   hud.attach(build.el);
   const menu = new MainMenu(app, stage, { onStart: play });
   back.addEventListener('click', quit);
   game.onSelect((id) => tip.open(id));
+  // Esc：没在放建筑、没选中东西时开 / 关暂停界面（结算弹出来以后不管）。
+  game.onEscape(() => {
+    if (!current || hud.isOver) return;
+    setPaused(!paused);
+  });
 
   app.ticker.add((t) => {
     const dt = t.deltaMS / 1000;
