@@ -207,11 +207,12 @@ export const SHOP_ITEMS = [
   { icon: 'livery' as const, name: '涂装：猩红', desc: '全军换上红黑涂装', price: 3000, tag: '外观' },
 ];
 
+/** 成就：目前只有展示，进度还没接上统计，全部从 0 开始。 */
 export const ACHIEVEMENTS = [
-  { name: '第一滴血', desc: '击杀第一只虫子', progress: 1, goal: 1 },
-  { name: '灭虫专家', desc: '累计击杀 10,000 只虫子', progress: 3420, goal: 10000 },
+  { name: '第一滴血', desc: '击杀第一只虫子', progress: 0, goal: 1 },
+  { name: '灭虫专家', desc: '累计击杀 10,000 只虫子', progress: 0, goal: 10000 },
   { name: '钢铁防线', desc: '一局内没有任何机枪兵阵亡并坚持 3 分钟', progress: 0, goal: 1 },
-  { name: '防空网', desc: '击落 500 只飞虫', progress: 212, goal: 500 },
+  { name: '防空网', desc: '击落 500 只飞虫', progress: 0, goal: 500 },
   { name: '天降正义', desc: '战列巡航舰一炮击杀 30 只虫子', progress: 0, goal: 1 },
   { name: '老兵不死', desc: '同一名机枪兵存活 10 分钟', progress: 0, goal: 1 },
 ];

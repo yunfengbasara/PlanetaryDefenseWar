@@ -133,6 +133,8 @@ export class MainMenu {
   // ------------------------------------------------------------ 结构
 
   private shell(): string {
+    // 按钮上的角标：已达成的成就数，没有就不显示。
+    const achDone = ACHIEVEMENTS.filter((x) => x.progress >= x.goal).length;
     return `
       <div class="pdw-vignette"></div>
       <header class="pdw-top">
@@ -148,7 +150,7 @@ export class MainMenu {
         </div>
         <nav class="pdw-nav">
           <button class="pdw-btn ghost" data-act="shop">${ICONS.shop}<span>商城</span></button>
-          <button class="pdw-btn ghost" data-act="ach">${ICONS.trophy}<span>成就</span><i class="pdw-badge">2</i></button>
+          <button class="pdw-btn ghost" data-act="ach">${ICONS.trophy}<span>成就</span>${achDone ? `<i class="pdw-badge">${achDone}</i>` : ''}</button>
         </nav>
       </header>
       <main class="pdw-body">
