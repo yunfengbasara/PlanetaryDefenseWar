@@ -722,6 +722,8 @@ export class DefenseScene {
     this.fx.debrisColors = MOON_DEBRIS;
     this.fx.smokeLift = 45;
     this.crystals = this.field.startCrystals;
+    // 巨舰停在画面左边（右边是面板），宽的图就停在基地左边缘上空。
+    this.cruiser.x = this.cruiser.hx = LANE_CX - 300;
     if (this.cross) {
       this.cruiser.hx = CROSS_C.x + 300;
       this.cruiser.hy = CROSS_C.y - 240;
@@ -1682,19 +1684,19 @@ export class DefenseScene {
   moveCruiser(x: number, y: number): boolean {
     if (!this.cruiserOn) return false;
     const c = this.cruiser;
-    const [lo, hi] = this.cross ? [CROSS_C.x - 500, CROSS_C.x + 500] : [LANE_CX - 420, LANE_CX + 420];
+    const [lo, hi] = this.cross ? [CROSS_C.x - 500, CROSS_C.x + 500] : [LANE_CX - this.field.wide - 120, LANE_CX + this.field.wide + 120];
     c.hx = clamp(x, lo, hi);
     c.hy = clamp(y, this.cross ? CROSS_C.y - 500 : TOP_Y + 60, this.cross ? CROSS_C.y + 500 : END_Y - 40);
     return true;
   }
 
-  /** 买巨舰（建造模式，一局一次）：从待命位置的右边远处飞进来。 */
+  /** 买巨舰（建造模式，一局一次）：从画面外飞进来（单通道地图从左边，十字高地从右边）。 */
   buyCruiser(): boolean {
     if (!this.field.cruiser || this.cruiserBought || this.lost || this.crystals < CRUISER_COST) return false;
     this.crystals -= CRUISER_COST;
     this.cruiserBought = true;
     const c = this.cruiser;
-    c.x = c.hx + 700;
+    c.x = this.cross ? c.hx + 700 : c.hx - 700;
     c.y = c.hy - 200;
     c.cd = 4;
     return true;

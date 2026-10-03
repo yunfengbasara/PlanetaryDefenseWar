@@ -24,6 +24,12 @@ const WIDEN_Y = 500;
 /** 平台的首尾。 */
 export const TOP_Y = 0;
 export const END_Y = 900;
+/**
+ * 通道往上画到哪儿：比地图顶边多出一大截。镜头拉到最远时（高分屏上能看到的比地图还大），通道照样一直通到画面上边，
+ * 不露出空白。基地以水晶核心（y=700）为中心，上边（开始变宽的地方）和下边（END_Y）离核心一样远；底边外面
+ * 画地图外的地面（地表地图）或太空（平台地图）。能走、能建、镜头能拖到的范围还是 TOP_Y..END_Y。
+ */
+export const DRAW_TOP = TOP_Y - 2000;
 
 export const T = 20;
 
@@ -35,6 +41,12 @@ onFieldChange(() => {
   CORE.x = c.x;
   CORE.y = c.y;
 });
+
+/**
+ * 默认取景（游戏里和主界面预览一样）横向至少框多宽（世界单位）。画面是 16:9、竖向先顶满，实际看到的大约 770 宽
+ * —— 05 虫巢核心的通道（半宽 410）比它还宽一点，铺满整个画面，两边边缘的岩块也不露出来。
+ */
+export const FRAME_W = 700;
 
 /** 某一行通道的左右边界：前方是当前战场的 narrow，过了 WIDEN_Y 放宽到 wide。 */
 export function spanAt(y: number): [number, number] {
@@ -76,7 +88,7 @@ const tileCache = new Map<string, Tile[]>();
 function buildTiles(): Tile[] {
   const WIDE = field().wide;
   const out: Tile[] = [];
-  for (let iy = Math.floor(TOP_Y / T); iy * T < END_Y; iy++) {
+  for (let iy = Math.floor(DRAW_TOP / T); iy * T < END_Y; iy++) {
     const [a, b] = spanAt(iy * T + T);
     for (let ix = Math.floor((LANE_CX - WIDE) / T); ix * T < LANE_CX + WIDE; ix++) {
       if ((ix + 1) * T <= a - T || ix * T >= b + T) continue;
@@ -180,7 +192,7 @@ export function drawFloor(s: ShapeBatch, cam: Camera, time: number): void {
   const g = cam.grain;
 
   // 平台底下的结构：沿边缘一条悬梁、每隔 40 一个三角托架 —— 侧面看不见，靠伸出来的这些读出"悬空"。
-  for (let y = Math.floor(Math.max(TOP_Y, top - 60) / T) * T; y < Math.min(END_Y, bottom + 40); y += T) {
+  for (let y = Math.floor(Math.max(DRAW_TOP, top - 60) / T) * T; y < Math.min(END_Y, bottom + 40); y += T) {
     const [a0, b0] = spanAt(y);
     const [a1, b1] = spanAt(y + T);
     edgeQuad(s, cam, a0 - 7, a0, y, a1 - 7, a1, y + T, UNDER, 5, -5);
@@ -203,7 +215,7 @@ export function drawFloor(s: ShapeBatch, cam: Camera, time: number): void {
   }
 
   // 接缝底色：整条平台先铺一层深色，面板往里缩一点，缝就露出来了。
-  for (let y = Math.floor(Math.max(TOP_Y, top - T) / T) * T; y < Math.min(END_Y, bottom); y += T) {
+  for (let y = Math.floor(Math.max(DRAW_TOP, top - T) / T) * T; y < Math.min(END_Y, bottom); y += T) {
     const [a0, b0] = spanAt(y);
     const [a1, b1] = spanAt(y + T);
     edgeQuad(s, cam, a0, b0, y, a1, b1, y + T, SEAM, 10);
@@ -219,14 +231,14 @@ export function drawFloor(s: ShapeBatch, cam: Camera, time: number): void {
   // 防线前的警戒线、两条靠边的黄色导向线。
   const [la, lb] = spanAt(450);
   hazard(s, cam, la + 8, 446, lb - 8, 451, 30);
-  for (let y = Math.floor(Math.max(TOP_Y, top) / 40) * 40; y < Math.min(440, bottom); y += 40) {
+  for (let y = Math.floor(Math.max(DRAW_TOP, top) / 40) * 40; y < Math.min(440, bottom); y += 40) {
     const [a, b] = spanAt(y);
     plate(s, cam, a + 14, y + 6, a + 15.5, y + 30, rgba(220, 180, 70, 150), 29);
     plate(s, cam, b - 15.5, y + 6, b - 14, y + 30, rgba(220, 180, 70, 150), 29);
   }
 
   // 边框：加高的一圈护边，上面一道亮边、隔一段一块警示条、一盏灯。
-  for (let y = Math.floor(Math.max(TOP_Y, top - T) / T) * T; y < Math.min(END_Y, bottom); y += T) {
+  for (let y = Math.floor(Math.max(DRAW_TOP, top - T) / T) * T; y < Math.min(END_Y, bottom); y += T) {
     const [a0, b0] = spanAt(y);
     const [a1, b1] = spanAt(y + T);
     const k = Math.round(y / T);

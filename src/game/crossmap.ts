@@ -27,8 +27,14 @@ export const RAMP = 70;
 export const PLAT_H = 26;
 
 const inPlat = (x: number, y: number): boolean => Math.abs(x - CROSS_C.x) <= PLAT && Math.abs(y - CROSS_C.y) <= PLAT;
-const inRoadNS = (x: number, y: number): boolean => Math.abs(x - CROSS_C.x) <= ROAD && Math.abs(y - CROSS_C.y) <= ARM;
-const inRoadEW = (x: number, y: number): boolean => Math.abs(y - CROSS_C.y) <= ROAD && Math.abs(x - CROSS_C.x) <= ARM;
+/**
+ * 虫在地图边缘（±ARM）再往外 SPAWN_OUT 的路上刷出来（默认镜头看不到那儿），自己走进画面 —— 和单通道地图从顶边外进来一样。
+ * 所以路能走的长度是 ARM + SPAWN_OUT。
+ */
+const SPAWN_OUT = 140;
+const WALK_ARM = ARM + SPAWN_OUT + 20;
+const inRoadNS = (x: number, y: number): boolean => Math.abs(x - CROSS_C.x) <= ROAD && Math.abs(y - CROSS_C.y) <= WALK_ARM;
+const inRoadEW = (x: number, y: number): boolean => Math.abs(y - CROSS_C.y) <= ROAD && Math.abs(x - CROSS_C.x) <= WALK_ARM;
 
 /** 能不能走（高台或者四条路上）。 */
 export function crossWalkable(x: number, y: number): boolean {
@@ -53,8 +59,8 @@ export function crossClamp(x: number, y: number): Vec2 {
   const c = CROSS_C;
   const options = [
     v2(clamp(x, c.x - PLAT, c.x + PLAT), clamp(y, c.y - PLAT, c.y + PLAT)),
-    v2(clamp(x, c.x - ROAD, c.x + ROAD), clamp(y, c.y - ARM, c.y + ARM)),
-    v2(clamp(x, c.x - ARM, c.x + ARM), clamp(y, c.y - ROAD, c.y + ROAD)),
+    v2(clamp(x, c.x - ROAD, c.x + ROAD), clamp(y, c.y - WALK_ARM, c.y + WALK_ARM)),
+    v2(clamp(x, c.x - WALK_ARM, c.x + WALK_ARM), clamp(y, c.y - ROAD, c.y + ROAD)),
   ];
   return options.reduce((p, q) => (Math.hypot(q.x - x, q.y - y) < Math.hypot(p.x - x, p.y - y) ? q : p));
 }
@@ -62,7 +68,7 @@ export function crossClamp(x: number, y: number): Vec2 {
 /** 过 (x, y) 这一行上能走的那一段（含 x 的那一段）。 */
 export function crossRowSpan(_x: number, y: number): [number, number] {
   const dy = Math.abs(y - CROSS_C.y);
-  if (dy <= ROAD) return [CROSS_C.x - ARM, CROSS_C.x + ARM];
+  if (dy <= ROAD) return [CROSS_C.x - WALK_ARM, CROSS_C.x + WALK_ARM];
   if (dy <= PLAT) return [CROSS_C.x - PLAT, CROSS_C.x + PLAT];
   return [CROSS_C.x - ROAD, CROSS_C.x + ROAD];
 }
@@ -87,19 +93,19 @@ export function crossBlocks(): { x0: number; x1: number; y0: number; y1: number 
   return out;
 }
 
-/** 四条路尽头的刷怪点（往里一点），以及横向能散开多少。 */
+/** 刷怪点：四条路上、地图边缘再往外 SPAWN_OUT（画面外），横向在路面里散开。 */
 export function crossSpawn(): Vec2 {
   const c = CROSS_C;
   const side = (Math.random() - 0.5) * 2 * (ROAD - 14);
   switch (Math.floor(Math.random() * 4)) {
     case 0:
-      return v2(c.x + side, c.y - ARM + 6);
+      return v2(c.x + side, c.y - ARM - SPAWN_OUT - Math.random() * 16);
     case 1:
-      return v2(c.x + side, c.y + ARM - 6);
+      return v2(c.x + side, c.y + ARM + SPAWN_OUT + Math.random() * 16);
     case 2:
-      return v2(c.x - ARM + 6, c.y + side);
+      return v2(c.x - ARM - SPAWN_OUT - Math.random() * 16, c.y + side);
     default:
-      return v2(c.x + ARM - 6, c.y + side);
+      return v2(c.x + ARM + SPAWN_OUT + Math.random() * 16, c.y + side);
   }
 }
 
@@ -131,6 +137,9 @@ function slab(s: ShapeBatch, cam: Camera, x0: number, y0: number, x1: number, y1
   s.quad(cam.worldToScreenZ(x0, y0, z), cam.worldToScreenZ(x1, y0, z), cam.worldToScreenZ(x1, y1, z), cam.worldToScreenZ(x0, y1, z), c, d);
 }
 
+/** 路在地图边缘（±ARM）外面还画多长（画面里看到的都是路，不露出空白）。 */
+const ROAD_BEYOND = 2000;
+
 export function drawCross(s: ShapeBatch, cam: Camera, time: number): void {
   const W = cam.viewWidth;
   const H = cam.viewHeight;
@@ -156,34 +165,26 @@ export function drawCross(s: ShapeBatch, cam: Camera, time: number): void {
     }
   }
 
-  // 四条路：压实的碎石土路，路沿一道暗边，中间两道车辙。
-  slab(s, cam, c.x - ROAD, c.y - ARM, c.x + ROAD, c.y + ARM, 0, ROAD_C, 3);
-  slab(s, cam, c.x - ARM, c.y - ROAD, c.x + ARM, c.y + ROAD, 0, ROAD_C, 3);
+  // 四条路：压实的碎石土路，路沿一道暗边，中间两道车辙。路一直通到画面外（镜头拉到最远也看不到路的尽头），
+  // 虫从地图边缘（±ARM）的路上出来。
+  const L = ARM + ROAD_BEYOND;
+  slab(s, cam, c.x - ROAD, c.y - L, c.x + ROAD, c.y + L, 0, ROAD_C, 3);
+  slab(s, cam, c.x - L, c.y - ROAD, c.x + L, c.y + ROAD, 0, ROAD_C, 3);
   for (const sgn of [-1, 1]) {
-    slab(s, cam, c.x + sgn * ROAD - 4, c.y - ARM, c.x + sgn * ROAD + 4, c.y + ARM, 0, ROAD_D, 3.1);
-    slab(s, cam, c.x - ARM, c.y + sgn * ROAD - 4, c.x + ARM, c.y + sgn * ROAD + 4, 0, ROAD_D, 3.1);
-    slab(s, cam, c.x + sgn * 22 - 2, c.y - ARM, c.x + sgn * 22 + 2, c.y + ARM, 0, rgba(70, 60, 50, 90), 3.2);
-    slab(s, cam, c.x - ARM, c.y + sgn * 22 - 2, c.x + ARM, c.y + sgn * 22 + 2, 0, rgba(70, 60, 50, 90), 3.2);
+    slab(s, cam, c.x + sgn * ROAD - 4, c.y - L, c.x + sgn * ROAD + 4, c.y + L, 0, ROAD_D, 3.1);
+    slab(s, cam, c.x - L, c.y + sgn * ROAD - 4, c.x + L, c.y + sgn * ROAD + 4, 0, ROAD_D, 3.1);
+    slab(s, cam, c.x + sgn * 22 - 2, c.y - L, c.x + sgn * 22 + 2, c.y + L, 0, rgba(70, 60, 50, 90), 3.2);
+    slab(s, cam, c.x - L, c.y + sgn * 22 - 2, c.x + L, c.y + sgn * 22 + 2, 0, rgba(70, 60, 50, 90), 3.2);
   }
   // 路面碎石。
-  for (let i = 0; i < 160; i++) {
-    const along = (hash(i, 31) - 0.5) * 2 * ARM;
+  for (let i = 0; i < 480; i++) {
+    const along = (hash(i, 31) - 0.5) * 2 * (ARM + 900);
     const across = (hash(i, 32) - 0.5) * 2 * (ROAD - 6);
     const [x, y] = i % 2 ? [c.x + across, c.y + along] : [c.x + along, c.y + across];
     if (Math.abs(x - c.x) < PLAT + RAMP && Math.abs(y - c.y) < PLAT + RAMP) continue;
     if (y < top - 20 || y > bottom + 20) continue;
     s.ellipse(cam.worldToScreen(x, y), (1 + hash(i, 33) * 1.6) * g, (0.7 + hash(i, 34)) * g, 0, rgba(70, 62, 54, 160), 3.3);
   }
-  // 路尽头：一道暗下去的裂谷口（虫就是从那儿爬出来的）。
-  for (const [x, y, w, h] of [
-    [c.x, c.y - ARM, ROAD * 2, 18],
-    [c.x, c.y + ARM, ROAD * 2, 18],
-    [c.x - ARM, c.y, 18, ROAD * 2],
-    [c.x + ARM, c.y, 18, ROAD * 2],
-  ]) {
-    s.ellipse(cam.worldToScreen(x, y), (w / 2) * g, (h / 2) * g * 0.7, 0, rgba(20, 14, 24, 200), 3.4);
-  }
-
   // 坡道：一块块金属踏板，从高台边降到路面；东西坡道朝南那一面露出三角形的侧墙。
   const ramp = (dir: 'n' | 's' | 'w' | 'e'): void => {
     const n = 7;

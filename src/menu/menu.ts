@@ -2,7 +2,7 @@ import type { Application } from 'pixi.js';
 import { BUG_LOOKS, type BugKind, drawBug } from '../game/bugs';
 import { field, useField } from '../game/fields';
 import { ARM, CROSS_C } from '../game/crossmap';
-import { LANE_CX, drawFloor } from '../game/floor';
+import { FRAME_W, LANE_CX, drawFloor } from '../game/floor';
 import { LINE_Y } from '../game/scene';
 import { Projection } from '../render/projection';
 import { Projector } from '../render/projector';
@@ -303,8 +303,8 @@ export class MainMenu {
         cam.x = CROSS_C.x;
         cam.y = CROSS_C.y - 14;
       } else {
-        cam.grain = cam.grainToFit(700, y1 - y0 + lift, 4);
-        cam.x = LANE_CX + 25;
+        cam.grain = cam.grainToFit(FRAME_W, y1 - y0 + lift, 4);
+        cam.x = LANE_CX; // 预览没有巨舰和面板，以通道为中心
         cam.y = (y0 + y1) / 2 - lift / 2;
       }
       const src = this.snap.capture(cam, (layers, c) => drawFloor(layers.ground, c, 0));

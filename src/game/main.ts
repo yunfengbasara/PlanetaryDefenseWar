@@ -6,7 +6,7 @@ import { Scene } from '../render/scene';
 import { AIRSTRIKE_COST, BUILDS, CRUISER_ID, type BuildKind, type StatKey } from './buildings';
 import { ARM, CROSS_C } from './crossmap';
 import { field, useField } from './fields';
-import { END_Y, LANE_CX, TOP_Y } from './floor';
+import { END_Y, FRAME_W, LANE_CX, TOP_Y } from './floor';
 import { BUILD_FRONT, CORE, DefenseScene, RALLY_MAX, type StructureInfo } from './scene';
 
 /** 主界面拿来开关战场的把手。 */
@@ -96,6 +96,8 @@ export interface BuildState {
 
 /** 核心碎了以后战场再演多久（爆炸、碎片落地），然后定格。 */
 const LOST_FREEZE = 2.5;
+/** 右侧那一列面板（波次、晶矿、建造列表）连边距一共多宽（CSS 像素）：默认取景往右让开它一点。 */
+const HUD_COLUMN = 244;
 /** 按下到松开移动超过这么多 CSS 像素算拖动，否则算点击。 */
 const CLICK_SLOP = 4;
 /** 放置时坐标对齐到几个世界单位，虚影不会一像素一像素地抖。 */
@@ -128,10 +130,16 @@ export function bootDefense(app: Application): DefenseHandle {
     const y0 = 175;
     const y1 = CORE.y + 62; // 一直看到后方的核心和它下面的血条、读数
     const lift = (20 * Projection.heightSquash) / Projection.groundSquash;
-    return { grain: cam.grainToFit(700, y1 - y0 + lift, 4), x: LANE_CX + 25, y: (y0 + y1) / 2 - lift / 2 };
+    // 横向：通道居中；地图比画面还宽（05）时往右挪一点（右边一截被面板盖着），挪到画面右边缘离地图边还剩 20 为止，
+    // 两侧都是地图、不露出外面的岩壁。镜头远近和主界面的侦察影像一样。
+    const grain = cam.grainToFit(FRAME_W, y1 - y0 + lift, 4);
+    const visW = cam.viewWidth / grain;
+    const share = Math.min(0.3, HUD_COLUMN / Math.max(1, app.canvas.clientWidth));
+    const shift = Math.min((share * visW) / 2, Math.max(0, field().wide - 20 - visW / 2));
+    return { grain, x: LANE_CX + shift, y: (y0 + y1) / 2 - lift / 2 };
   };
   /**
-   * 镜头能去的范围（世界坐标）：横向到地图最宽处再留一点边，但至少装得下默认取景（右边的巡航舰
+   * 镜头能去的范围（世界坐标）：横向到地图最宽处再留一点边，但至少装得下默认取景（左边待命的巨舰
    * 在默认取景里）；纵向从地图顶边到底边。镜头的可视范围必须落在这里面，比它大就居中。
    */
   const bounds = (): { l: number; r: number; t: number; b: number } => {

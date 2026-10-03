@@ -15,7 +15,10 @@ export type Theme = 'space' | 'desert' | 'ice' | 'moon' | 'hive' | 'starship' | 
 export interface FieldDef {
   id: string;
   theme: Theme;
-  /** 前方通道、后方炮位区的半宽。后方要放坦克、高射炮、兵营，别比 235 窄。 */
+  /**
+   * 前方通道、后方炮位区的半宽。后方要放坦克、高射炮、兵营，别比 235 窄。
+   * 02~05 一张比一张宽（通道 215→410、基地 255→410），05 的通道和基地一样宽，正好铺满整个默认画面。
+   */
   narrow: number;
   wide: number;
   /** 通关要打几波：最后一波打完、场上清空就赢。 */
@@ -86,8 +89,8 @@ export const FIELDS: Record<string, FieldDef> = {
   'red-sand-canyon': {
     id: 'red-sand-canyon',
     theme: 'desert',
-    narrow: 200,
-    wide: 240,
+    narrow: 215,
+    wide: 255,
     waves: 18,
     waveScale: 1.1,
     maxAlive: 320,
@@ -108,8 +111,8 @@ export const FIELDS: Record<string, FieldDef> = {
   'lunar-surface': {
     id: 'lunar-surface',
     theme: 'moon',
-    narrow: 180,
-    wide: 235,
+    narrow: 250,
+    wide: 290,
     waves: 18,
     waveScale: 1,
     maxAlive: 300,
@@ -125,12 +128,12 @@ export const FIELDS: Record<string, FieldDef> = {
     cruiser: true,
     startCrystals: 500,
   },
-  /** 04 冰封前哨：通道稍窄，刺蛇多；落雪。没有巡航舰支援，只有炮艇。 */
+  /** 04 冰封前哨：通道更宽，刺蛇多；落雪。没有巡航舰支援，只有炮艇。 */
   'frost-outpost': {
     id: 'frost-outpost',
     theme: 'ice',
-    narrow: 165,
-    wide: 235,
+    narrow: 300,
+    wide: 335,
     waves: 20,
     waveScale: 1.1,
     maxAlive: 330,
@@ -191,12 +194,12 @@ export const FIELDS: Record<string, FieldDef> = {
     cruiser: true,
     startCrystals: 600,
   },
-  /** 05 虫巢核心：最难。虫多、刷得快，重甲和远程比例最高。 */
+  /** 05 虫巢核心：最难。通道和基地一样宽，虫多、刷得快，重甲和远程比例最高。 */
   'hive-core': {
     id: 'hive-core',
     theme: 'hive',
-    narrow: 195,
-    wide: 240,
+    narrow: 410,
+    wide: 410,
     waves: 30,
     waveScale: 1.4,
     maxAlive: 400,

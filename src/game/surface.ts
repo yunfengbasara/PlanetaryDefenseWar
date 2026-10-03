@@ -3,7 +3,7 @@ import type { Camera } from '../render/camera';
 import { type Rgba, lerpColor, rgb, rgba } from '../render/color';
 import { Projection } from '../render/projection';
 import type { ShapeBatch } from '../render/shapeBatch';
-import { END_Y, LANE_CX, T, TOP_Y, edgeQuad, hash, plate, spanAt } from './floor';
+import { DRAW_TOP, END_Y, LANE_CX, T, edgeQuad, hash, plate, spanAt } from './floor';
 import { type Theme, field } from './fields';
 
 /**
@@ -159,6 +159,8 @@ export function drawSurface(s: ShapeBatch, cam: Camera, time: number): void {
   const right = cam.screenToWorld(W + 60, 0).x;
   /** 离通道够远（不压到路面上）。 */
   const outside = (x: number, y: number, r: number): boolean => {
+    // 基地底边以下全是地图外的地面。
+    if (y - r * 0.4 > END_Y + 14) return true;
     const [a, b] = spanAt(y);
     return x + r < a - 10 || x - r > b + 10;
   };
@@ -189,7 +191,7 @@ export function drawSurface(s: ShapeBatch, cam: Camera, time: number): void {
   }
 
   // 通道路面：压实的地面，每格一点点色差。
-  for (let y = Math.floor(Math.max(TOP_Y, top) / T) * T; y < Math.min(END_Y, bottom); y += T) {
+  for (let y = Math.floor(Math.max(DRAW_TOP, top) / T) * T; y < Math.min(END_Y, bottom); y += T) {
     const [a0, b0] = spanAt(y);
     const [a1, b1] = spanAt(y + T);
     edgeQuad(s, cam, a0, b0, y, a1, b1, y + T, st.road, 4);
@@ -232,14 +234,14 @@ export function drawSurface(s: ShapeBatch, cam: Camera, time: number): void {
   if (st.tracks) {
     for (const off of [-74, -60, 60, 74]) {
       const x = LANE_CX + off;
-      const y0 = Math.max(TOP_Y, top);
+      const y0 = Math.max(DRAW_TOP, top);
       const y1 = Math.min(PAD_Y, bottom);
       if (y1 > y0) plate(s, cam, x - 2, y0, x + 2, y1, rgba(0, 0, 0, 34), 4.5);
     }
   }
   // 虫巢：路面上爬着几条发光的脉络。
   if (st.ripple === 'vein') {
-    for (let y = Math.floor(Math.max(TOP_Y, top) / 60) * 60; y < Math.min(PAD_Y - 20, bottom); y += 60) {
+    for (let y = Math.floor(Math.max(DRAW_TOP, top) / 60) * 60; y < Math.min(PAD_Y - 20, bottom); y += 60) {
       const [a, b] = spanAt(y);
       const x0 = a + 20 + hash(y, 3) * (b - a - 40);
       const p0 = cam.worldToScreen(x0, y);
@@ -285,7 +287,7 @@ export function drawSurface(s: ShapeBatch, cam: Camera, time: number): void {
 
 
   // 崖脚：通道两边一溜岩块，大小错落。
-  for (let y = Math.floor(Math.max(TOP_Y, top - 20) / 12) * 12; y < Math.min(END_Y, bottom + 20); y += 12) {
+  for (let y = Math.floor(Math.max(DRAW_TOP, top - 20) / 12) * 12; y < Math.min(END_Y, bottom + 20); y += 12) {
     const [a, b] = spanAt(y);
     for (const [edge, dir] of [[a, -1], [b, 1]] as const) {
       const k = hash(Math.round(y / 12), dir + 5);
@@ -295,6 +297,15 @@ export function drawSurface(s: ShapeBatch, cam: Camera, time: number): void {
       rock(s, cam, st, x, yy, r, 8 + y / 1e4);
       // 虫巢的崖脚隔一段戳出一根骨刺。
       if (st.outcrop === 'sac' && k > 0.78) spike(s, cam, x + dir * 3, yy, 10 + k * 8, dir, 8.5 + y / 1e4);
+    }
+  }
+  // 基地底边：一溜岩块收口，外面就是地图外的地面。
+  if (bottom > END_Y - 20) {
+    const [a, b] = spanAt(END_Y);
+    for (let x = Math.floor((a - 6) / 11) * 11; x < b + 6; x += 11) {
+      const k = hash(Math.round(x / 11), 77);
+      const r = 4 + k * 7;
+      rock(s, cam, st, x + hash(77, Math.round(x)) * 4, END_Y + r * 0.4 + hash(Math.round(x), 78) * 4, r, 8 + END_Y / 1e4);
     }
   }
 
