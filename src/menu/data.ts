@@ -47,7 +47,7 @@ const ALL_ENEMIES: EnemyInfo[] = [
   { kind: 'beetle', name: '甲虫', tag: '地面 · 重甲', threat: 3, note: '个头大、背负骨刺，非常耐打。' },
   { kind: 'serpent', name: '刺蛇', tag: '地面 · 范围', threat: 4, note: '在阵前停下，举镰砸地，朝防线刺出一串地刺。' },
   { kind: 'spitter', name: '喷酸虫', tag: '远程 · 腐蚀', threat: 3, note: '停在射程外，往防线吐抛物线的酸液。' },
-  { kind: 'flyer', name: '飞虫', tag: '空中', threat: 2, note: '只有高射炮和机甲导弹能对付它们。' },
+  { kind: 'flyer', name: '飞虫', tag: '空中', threat: 2, note: '从空中越过地面的拥堵直扑基地；火炮专打它们，别的守军也能顺手打。' },
 ];
 
 const enemies = (...kinds: BugKind[]): EnemyInfo[] => kinds.map((k) => ALL_ENEMIES.find((e) => e.kind === k)!);
@@ -134,7 +134,7 @@ export const MAPS: MapInfo[] = [
     locked: false,
     afterTutorial: true,
     difficulty: 3,
-    desc: '一片布满陨石坑的灰色月海。没有大气，飞虫上不来；可低重力让跳虫蹦得又高又远，防线前竖起了一排金属挡板。',
+    desc: '一片布满陨石坑的灰色月海。没有大气，飞虫上不来；可低重力让跳虫蹦得又高又远，基地的地坪一直铺到防线后面。',
     zone: '月面防御',
     reward: 1500,
     enemies: enemies('crawler', 'hopper', 'beetle', 'serpent', 'spitter'),

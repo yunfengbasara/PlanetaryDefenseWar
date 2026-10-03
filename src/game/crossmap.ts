@@ -28,11 +28,11 @@ export const PLAT_H = 26;
 
 const inPlat = (x: number, y: number): boolean => Math.abs(x - CROSS_C.x) <= PLAT && Math.abs(y - CROSS_C.y) <= PLAT;
 /**
- * 虫在地图边缘（±ARM）再往外 SPAWN_OUT 的路上刷出来（默认镜头看不到那儿），自己走进画面 —— 和单通道地图从顶边外进来一样。
- * 所以路能走的长度是 ARM + SPAWN_OUT。
+ * 虫刷在画面边缘外面一点的路上，自己走进画面 —— 和单通道地图从画面上边外进来一样；镜头拉得很近时也至少离中心
+ * SPAWN_MIN（不刷到高台上）。镜头拉远看得到路尽头时就刷得更远，所以路能走的长度给足（WALK_ARM）。
  */
-const SPAWN_OUT = 140;
-const WALK_ARM = ARM + SPAWN_OUT + 20;
+const SPAWN_MIN = 300;
+const WALK_ARM = ARM + 3000;
 const inRoadNS = (x: number, y: number): boolean => Math.abs(x - CROSS_C.x) <= ROAD && Math.abs(y - CROSS_C.y) <= WALK_ARM;
 const inRoadEW = (x: number, y: number): boolean => Math.abs(y - CROSS_C.y) <= ROAD && Math.abs(x - CROSS_C.x) <= WALK_ARM;
 
@@ -93,19 +93,22 @@ export function crossBlocks(): { x0: number; x1: number; y0: number; y1: number 
   return out;
 }
 
-/** 刷怪点：四条路上、地图边缘再往外 SPAWN_OUT（画面外），横向在路面里散开。 */
-export function crossSpawn(): Vec2 {
+/**
+ * 刷怪点：随机一条路，横向在路面里散开；放到画面边缘（view）外面一点，再往外多 back（一群一起刷时拉成一串）。
+ */
+export function crossSpawn(view: { l: number; t: number; r: number; b: number }, back = 0): Vec2 {
   const c = CROSS_C;
   const side = (Math.random() - 0.5) * 2 * (ROAD - 14);
+  const out = (edge: number): number => Math.max(SPAWN_MIN, edge + 24) + back + Math.random() * 16;
   switch (Math.floor(Math.random() * 4)) {
     case 0:
-      return v2(c.x + side, c.y - ARM - SPAWN_OUT - Math.random() * 16);
+      return v2(c.x + side, c.y - out(c.y - view.t));
     case 1:
-      return v2(c.x + side, c.y + ARM + SPAWN_OUT + Math.random() * 16);
+      return v2(c.x + side, c.y + out(view.b - c.y));
     case 2:
-      return v2(c.x - ARM - SPAWN_OUT - Math.random() * 16, c.y + side);
+      return v2(c.x - out(c.x - view.l), c.y + side);
     default:
-      return v2(c.x + ARM + SPAWN_OUT + Math.random() * 16, c.y + side);
+      return v2(c.x + out(view.r - c.x), c.y + side);
   }
 }
 

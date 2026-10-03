@@ -45,6 +45,17 @@ const MECH_RANGE = 300;
 const MISSILE_RANGE = 360;
 const TANK_RANGE = 330;
 const AA_RANGE = 320;
+/**
+ * 火炮（双管速射炮）：专打飞虫，地面是顺带。炮塔最快 AA_TURN 弧度 / 秒（原来 2.2，太灵活），炮管和目标差 AA_AIM 以内才开火；
+ * 每 AA_INTERVAL 秒一发（左右炮管交替），一发 AA_DMG，打地面命中率 AA_HIT_GROUND。
+ */
+const AA_TURN = 1.2;
+const AA_AIM = 0.08;
+const AA_INTERVAL = 0.16;
+const AA_DMG = 1;
+const AA_HIT_GROUND = 0.4;
+const AA_TURN_COST = 160;
+const AA_MIN = 50;
 
 /** 动力装甲：深蓝的甲片、橙色的饰条、发光的橙色面罩（帽檐那一块就是面罩）。 */
 export const MARINE_KIT: Kit = {
@@ -63,15 +74,13 @@ export const MARINE_SCALE = 1.18;
 const MARINE_HP = 30;
 /** 建造模式：机甲的血量（建筑的血量在 buildings.ts）。 */
 const MECH_HP = 60;
-/** 漏过防线的虫往多远以内的建筑 / 机甲扑（再远就直奔核心）。 */
-const PREY_RANGE = 150;
 
 /** 巨舰挪位置时的最高航速（非常慢）。 */
 const CRUISER_CRUISE = 8;
 /** 碰撞半径：机枪兵、机甲（建造模式里单位之间、单位和建筑之间互相推开）。 */
 const RIFLE_R = 6;
 const MECH_R = 14;
-/** 出售退还总花费（造价 + 升级）的多少。 */
+/** 出售退还总花费（造价 + 升级）的多少；再乘剩下的血量比例（残血卖掉退得少，免得快被打爆时卖掉钻空子）。 */
 const SELL_REFUND = 0.7;
 /** 集结点离建筑最远多少。 */
 export const RALLY_MAX = 220;
@@ -104,8 +113,8 @@ const waveSize = (n: number, scale: number, total: number): number => {
 const WAVE_BURST = 0.3;
 const STREAM_SPAN = 1;
 /**
- * 整群刷出来时，从地图顶边往下铺多长：至少 WAVE_STRING_MIN（虫少的波也有一部分直接落在默认镜头里，
- * 一按就看得见），每只虫再加 WAVE_STRING，最长 WAVE_STRING_MAX（别铺到防线跟前）。
+ * 整群刷出来时，在画面外面往外拉成一串，拉多长：至少 WAVE_STRING_MIN，每只虫再加 WAVE_STRING，最长 WAVE_STRING_MAX。
+ * 最前头的马上走进画面，后面的一只接一只跟进来（虫走 40 / 秒，一串大约 7~8 秒走完）。
  */
 const WAVE_STRING_MIN = 280;
 const WAVE_STRING = 2;
@@ -125,9 +134,6 @@ const SPLAT_NEAR = 12;
 const SPLAT_CROWD = 3;
 /** 血条分几格。 */
 const HP_PIPS = 5;
-const BITE: Partial<Record<BugKind, number>> = { crawler: 1, hopper: 2, beetle: 3 };
-const SPIKE_DMG = 4;
-const ACID_DMG = 2;
 /** 兵营造一个兵的时间、新兵走路的速度、尸体躺多久。 */
 const WALK_SPEED = 30;
 /** 建造模式：机甲默认的集结线、建筑最靠前能放到哪儿。 */
@@ -141,15 +147,44 @@ const CORPSE_TIME = 7;
 const CRUISER_SCALE = 1.4;
 
 /**
- * 水晶核心：兵营和指挥中心中间、地图中轴上。突破防线的虫子会冲过来撞它，血打空这一局就输了。
- * 下面几张表是先填的占位数值，之后再调。
+ * 水晶核心：地图中轴上（十字高地在正中）。虫子冲到跟前会一直撕咬 / 喷吐它，血打空这一局就输了。
  */
 export { CORE };
-/** 虫子离核心多近算撞上。 */
-const CORE_REACH = 16;
-const CORE_HP = 100;
-/** 每种虫撞一下核心扣多少血。 */
-const CORE_DMG: Record<BugKind, number> = { crawler: 4, hopper: 5, beetle: 12, flyer: 6, serpent: 10, spitter: 8 };
+const CORE_HP = 200;
+/** 核心占地的半径（虫贴到这个距离就算够得着）。 */
+const CORE_R = 18;
+
+/**
+ * 虫的攻击方式。每只虫隔一会儿（SEEK_EVERY）看一眼视野（sight）里离它最近的东西 —— 机枪兵、机甲、建筑、核心 ——
+ * 有就朝它走，够得着（range，从目标边缘算）就停下来打；没有就沿通道往前走、过了防线直奔核心。
+ *
+ *   近战（小爬虫、跳虫、甲虫、飞虫）  贴上去每 every 秒咬 / 撞一下，扣 dmg，一直咬到自己被打死或者目标没了
+ *   喷酸虫                           停在射程里，每 every 秒朝目标吐一口酸液，落地 SPLASH 以内的都扣 dmg
+ *   刺蛇                             停在射程里，举起骨镰砸地，朝目标刺出一串地刺，每根刺扎到的扣 dmg
+ *
+ * 伤害对机枪兵、机甲、建筑、核心一样。不会撞上就自爆（以后的自爆兵单独写一种攻击方式）。
+ */
+interface BugAttack {
+  sight: number;
+  range: number;
+  dmg: number;
+  every: number;
+}
+const ATTACK: Record<BugKind, BugAttack> = {
+  crawler: { sight: 150, range: 6, dmg: 1, every: 0.8 },
+  hopper: { sight: 170, range: 8, dmg: 2, every: 1.1 },
+  beetle: { sight: 150, range: 10, dmg: 4, every: 1.4 },
+  flyer: { sight: 180, range: 8, dmg: 2, every: 1.2 },
+  spitter: { sight: 170, range: 110, dmg: 3, every: 3.2 },
+  serpent: { sight: 200, range: 130, dmg: 4, every: 4.5 },
+};
+const SEEK_EVERY = 0.5;
+/** 单通道地图刷怪最多刷到地图顶边往里多远（默认镜头的上边大约在 147）。 */
+const SPAWN_DEEP = 150;
+/** 酸液落地溅多大一片。 */
+const SPLASH = 12;
+/** 虫的攻击目标：机枪兵 / 机甲、建筑，或者核心。 */
+type Foe = Defender | Structure | 'core';
 /** 每种虫被打死给多少晶矿。 */
 const KILL_REWARD: Record<BugKind, number> = { crawler: 1, hopper: 2, beetle: 5, flyer: 3, serpent: 6, spitter: 4 };
 /**
@@ -252,14 +287,18 @@ interface Bug {
   wobble: number;
   /** 跳虫：一跳的计时（< 0.4 在空中）。 */
   hop: number;
-  /** 刺蛇 / 喷酸虫：在哪儿停下来攻击。emerge 恒为 1（历史字段）。 */
+  /** emerge 恒为 1（历史字段）。 */
   emerge: number;
-  surfaceAt: number;
-  /** 喷酸 / 放刺的冷却；喷吐动作。 */
+  /** 攻击冷却；喷吐 / 举镰的动作（0..1）。 */
   cd: number;
   spit: number;
-  /** 建造模式：漏过防线后扑向的目标（建筑或机甲）；null = 直奔核心，undefined = 还没挑。 */
-  prey?: Structure | Defender | null;
+  /** 正在打的目标（null = 视野里没东西，往前走）；离下次重新挑目标还有几秒。 */
+  prey: Foe | null;
+  seek: number;
+  /** 近战扑咬的动作（0..1，往 ax / ay 方向扑一下）。 */
+  lunge: number;
+  ax: number;
+  ay: number;
 }
 
 interface Splat {
@@ -485,6 +524,8 @@ interface Missile {
   ty: number;
   tz: number;
   t: number;
+  /** 攻击力倍率（车间的攻击力升级）：落地爆炸的伤害和范围跟着涨。 */
+  power: number;
 }
 
 /** 机枪抛出的弹壳。 */
@@ -683,6 +724,8 @@ export class DefenseScene {
   milestone: { wave: number; amount: number } | null = null;
   /** 飘在战场上的金色 "+N"。 */
   private readonly pops: { x: number; y: number; z: number; t: number; text: string }[] = [];
+  /** 镜头现在看到的范围（世界坐标，外面每帧更新）：刷怪刷在它外面。 */
+  view = { l: -1e4, t: TOP_Y, r: 1e4, b: 1e4 };
   /** 飘在虫头上的扣血数字。 */
   private readonly hits: HitNum[] = [];
   coreHp = CORE_HP;
@@ -732,7 +775,12 @@ export class DefenseScene {
   }
 
   /** 新虫默认从地图顶边外面一点刷出来，走进画面。 */
-  private spawn(y = TOP_Y - 30 + Math.random() * 34): void {
+  /**
+   * 刷一只虫，刷在画面外面让它自己走进来：单通道地图紧贴画面上边再往上 back（一群一起刷时拉成一串）；
+   * 镜头拖到下面去了也最多只刷到地图顶边往里 SPAWN_DEEP 的地方（不会刷到防线跟前）。十字高地在画面边缘外的路上（crossSpawn）。
+   */
+  private spawn(back = Math.random() * 34): void {
+    const y = Math.min(this.view.t, TOP_Y + SPAWN_DEEP) - 24 - back;
     // 按 mix 抽一种；还没到出场波次的虫不出，刚出场的比例打折。
     const n = Math.max(1, this.wave);
     const weights = this.field.mix.map(([k, w]): [BugKind, number] => [k, w * clamp((n - KIND_FROM[k] + 1) / 3, 0, 1)]);
@@ -746,7 +794,7 @@ export class DefenseScene {
       r -= w;
     }
     const looks = BUG_LOOKS[kind];
-    const at = this.cross ? crossSpawn() : null;
+    const at = this.cross ? crossSpawn(this.view, back) : null;
     const speed = {
       crawler: 30 + Math.random() * 22,
       hopper: 34 + Math.random() * 10,
@@ -772,19 +820,23 @@ export class DefenseScene {
       wobble: Math.random() * 10,
       hop: Math.random(),
       emerge: 1,
-      // 刺蛇：在哪儿停下来砸刺。喷酸虫：在哪儿停下来吐 —— 每只不一样，离防线 140~290 不等。
-      // （一开始是统一的"离防线 230 就停"，结果所有喷酸虫在同一条横线上排成一排、死成一排。）
-      surfaceAt: kind === 'spitter' ? LINE_Y - 140 - Math.random() * 150 : LINE_Y - 150 - Math.random() * 60,
-      cd: 1 + Math.random() * 2,
+      cd: Math.random() * ATTACK[kind].every,
       spit: 0,
+      prey: null,
+      seek: Math.random() * SEEK_EVERY,
+      lunge: 0,
+      ax: 0,
+      ay: 1,
     });
   }
 
-  /** 某个守军能打到的虫：在他正面一条纵列内、射程以内，不在地下。 */
-  /** 以 (x, y) 为圆心、range 为半径的圆里活着的虫（flyers：只要飞虫 / 只要地面虫）。 */
-  private inRange(x: number, y: number, range: number, flyers: boolean): Bug[] {
+  /**
+   * 以 (x, y) 为圆心、range 为半径的圆里活着的虫。守军的攻击不分天上地上，默认 'all' 都算；
+   * 'air' 只要飞虫（火炮、机甲导弹优先挑飞虫时用）。
+   */
+  private inRange(x: number, y: number, range: number, which: 'all' | 'air' = 'all'): Bug[] {
     const r2 = range * range;
-    return this.bugs.filter((b) => b.dead < 0 && (b.kind === 'flyer') === flyers && b.emerge > 0.5 && (b.x - x) ** 2 + (b.y - y) ** 2 < r2);
+    return this.bugs.filter((b) => b.dead < 0 && (which === 'all' || b.kind === 'flyer') && b.emerge > 0.5 && (b.x - x) ** 2 + (b.y - y) ** 2 < r2);
   }
 
   /** 离 (x, y) 最近的那一只。 */
@@ -873,7 +925,8 @@ export class DefenseScene {
     this.addSplat({ x, y, t: 0, blobs: makeSplat(5 + size * 5, 0, 1, true), blood: [rgb(22, 24, 30), rgb(52, 50, 50)] });
     const r = (20 + size * 20) * (1 + (power - 1) * 0.3);
     for (const b of this.bugs) {
-      if (b.dead >= 0 || b.lift > 20) continue;
+      // 飞在天上的虫也吃爆炸（守军的攻击不分天上地上）。
+      if (b.dead >= 0) continue;
       const d = Math.hypot(b.x - x, b.y - y);
       if (d < r) this.hurt(b, 10 * power, x, y, 1 - d / r);
     }
@@ -1027,29 +1080,15 @@ export class DefenseScene {
         if (b.dead > 5) this.bugs.splice(i, 1);
         continue;
       }
-      this.moveBug(b, dt, ground);
-      // 冲到防线前：扑上去咬最近的机枪兵一口，然后被近距离打倒（碎片和血往远离防线的方向溅）。
-      // 正面没人（那个位置的兵死了）就穿过缺口；路过巡逻机甲脚边会被它顺手打掉，没碰上的就一路冲向核心。
-      if ((this.cross || b.y > LINE_Y - 14) && b.kind !== 'flyer') {
-        const m = this.marineNear(b.x, b.y, 20);
-        if (m) {
-          this.hurtMarine(m, BITE[b.kind] ?? 2, b.kind);
-          this.hurt(b, 99, b.x, LINE_Y, 0);
-          continue;
-        }
-        const mech = this.cross || (b.y > LINE_Y + 20 && b.y < LINE_Y + 60) ? this.mechNear(b.x, b.y) : null;
-        if (mech) {
-          // 建造模式的机甲会挨咬（别的地图的机甲是打不坏的）。
-          this.hurtMech(mech, BITE[b.kind] ?? 2);
-          this.hurt(b, 99, b.x, LINE_Y + 40, 0);
-          continue;
-        }
+      // 隔一会儿重新看一眼视野里最近的目标；目标没了马上重挑。
+      b.seek -= dt;
+      if (b.seek <= 0 || (b.prey && !this.foeAlive(b.prey))) {
+        b.prey = this.pickFoe(b);
+        b.seek = SEEK_EVERY * (0.7 + Math.random() * 0.6);
       }
-      if (b.prey && this.preyReached(b)) {
-        this.strike(b);
-        continue;
-      }
-      if ((this.cross || b.y > LINE_Y) && Math.hypot(b.x - CORE.x, b.y - CORE.y) < CORE_REACH) this.crash(b);
+      const engaged = this.engaged(b);
+      this.moveBug(b, dt, ground, engaged);
+      this.bugAttack(b, dt, ground, engaged);
     }
 
     this.updateDefenders(dt);
@@ -1062,88 +1101,46 @@ export class DefenseScene {
     this.fx.update(dt, this.terrain);
   }
 
-  private moveBug(b: Bug, dt: number, ground: number): void {
+  private moveBug(b: Bug, dt: number, ground: number, engaged: boolean): void {
     b.z = ground;
+    b.lunge = Math.max(0, b.lunge - dt * 5);
     const wob = Math.sin(this.time * 2.2 + b.wobble) * b.speed * 0.25 * dt;
     switch (b.kind) {
       case 'hopper': {
-        // 一跳 0.4 秒、落地停 0.5 秒。跳的时候速度是走路的三倍多，划一道小抛物线。
+        // 一跳 0.4 秒、落地停 0.5 秒。跳的时候速度是走路的三倍多，划一道小抛物线；贴上目标就落地开咬。
+        if (engaged) {
+          b.lift = Math.max(0, b.lift - dt * 60);
+          b.phase = (b.phase + dt * 2) % 1;
+          break;
+        }
         b.hop += dt;
         const cycle = 0.9;
         if (b.hop > cycle) b.hop -= cycle;
         const air = b.hop < 0.4;
         const u = b.hop / 0.4;
         b.lift = air ? 14 * 4 * u * (1 - u) : 0;
-        if (!this.toCore(b, (air ? b.speed * 2.2 : 0) * dt)) {
-          b.y += (air ? b.speed * 2.2 : 0) * dt;
-          b.x += wob * (air ? 2 : 0);
-        }
+        this.stepBug(b, (air ? b.speed * 2.2 : 0) * dt, wob * (air ? 2 : 0));
         b.phase = (b.phase + dt * 2) % 1;
         break;
       }
-      case 'serpent': {
-        // 刺蛇：蛇尾左右扭着往前游；到了阵前停下，慢慢举起骨镰，砸下去的一瞬间朝前刺出一串地刺。
-        if (b.y < b.surfaceAt) {
-          b.y += b.speed * dt;
-          b.x += wob * 0.5;
+      case 'serpent':
+        // 刺蛇：蛇尾左右扭着往前游；够得着目标就停下（举镰、砸地在 bugAttack 里）。
+        if (engaged) b.phase = (b.phase + dt * 0.35) % 1;
+        else {
+          this.stepBug(b, b.speed * dt, wob * 0.5);
           b.phase = (b.phase + dt * 1.4) % 1;
-          b.spit = Math.max(0, b.spit - dt * 4);
-        } else {
-          b.phase = (b.phase + dt * 0.35) % 1;
-          b.cd -= dt;
-          b.spit = b.cd < 0.7 ? Math.min(1, b.spit + dt * 2) : Math.max(0, b.spit - dt * 5);
-          if (b.cd <= 0) {
-            b.cd = 3.5 + Math.random() * 2;
-            b.spit = 0;
-            // 一串地刺：从虫身前开始，一根接一根往前冒，像一道沿地面窜过去的裂缝。
-            for (let k = 1; k <= 14; k++) {
-              const yy = b.y + 10 + k * 10;
-              if (yy > LINE_Y + 6) break;
-              this.spikes.push({ x: b.x + Math.sin(k * 1.7) * 3, y: yy, t: -k * 0.05, h: 10 + Math.random() * 6 });
-            }
-            this.fx.poof(b.x, b.y + 8, 0, 0.4);
-            // 砸完往前挪一点，免得一排刺蛇的尸体死在同一条线上。
-            b.surfaceAt = Math.min(LINE_Y - 120, b.surfaceAt + 8 + Math.random() * 16);
-          }
         }
         break;
-      }
-      case 'spitter': {
-        // 走到离防线两百多单位的地方就停下，鼓起酸囊，往前吐。
-        if (b.y < b.surfaceAt) {
-          b.y += b.speed * dt;
-          b.x += wob;
-          b.phase = (b.phase + (b.speed / 9) * dt) % 1;
-          b.spit = Math.max(0, b.spit - dt * 3);
-        } else {
-          b.cd -= dt;
-          b.spit = clamp(1 - b.cd / 0.8, 0, 1);
-          if (b.cd <= 0) {
-            b.cd = 2.6 + Math.random() * 1.5;
-            // 吐完一口往前挪一小段再停：一边吐一边逼近，最近挪到离防线 110。
-            b.surfaceAt = Math.min(LINE_Y - 110, b.surfaceAt + 10 + Math.random() * 25);
-            const tx = b.x + (Math.random() - 0.5) * 50;
-            const ty = LINE_Y - 4 + (Math.random() - 0.5) * 14;
-            const from = v3(b.x, b.y + 9, ground + 8);
-            this.globs.push({ from, to: v3(tx, ty, this.terrain.heightAt(tx, ty)), t: 0, dur: 0.9 });
-          }
-        }
-        break;
-      }
       case 'flyer':
-        if (!this.toCore(b, b.speed * dt)) {
-          b.y += b.speed * dt;
-          b.x += wob;
-        }
-        b.lift = 50 + Math.sin(this.time * 1.7 + b.wobble) * 12;
+        if (!engaged) this.stepBug(b, b.speed * dt, wob);
+        b.lift = (engaged ? 34 : 50) + Math.sin(this.time * 1.7 + b.wobble) * 12;
         b.phase = (b.phase + (b.speed / 9) * dt) % 1;
         break;
       default:
-        if (!this.toCore(b, b.speed * dt)) {
-          b.y += b.speed * dt;
-          b.x += wob;
-        }
-        b.phase = (b.phase + (b.speed / 9) * dt) % 1;
+        if (!engaged) {
+          this.stepBug(b, b.speed * dt, wob);
+          b.phase = (b.phase + (b.speed / 9) * dt) % 1;
+        } else b.phase = (b.phase + dt * 0.8) % 1;
     }
     // 地面上的虫只能在平台上走；飞虫可以飞到虚空上面去。
     if (this.cross) {
@@ -1174,7 +1171,7 @@ export class DefenseScene {
         // 还在去集结点的路上：射程里没虫就接着走（端着枪走路的姿势）；有虫就停下来打，打完再走。
         if (d.path?.length) {
           if (d.burst <= 0 && (!d.target || d.target.dead >= 0) && d.cd <= 0) {
-            d.target = this.nearest(this.inRange(d.x, d.y, this.rangeOf(d), false), d.x, d.y);
+            d.target = this.nearest(this.inRange(d.x, d.y, this.rangeOf(d)), d.x, d.y);
             if (d.target) d.burst = 3;
             else d.cd = 0.25;
           }
@@ -1191,7 +1188,7 @@ export class DefenseScene {
         // 步兵就是机枪兵：三发一个短点射。
         aimPose(d.pose, d.recoil);
         if (d.burst <= 0 && d.cd <= 0) {
-          d.target = this.nearest(this.inRange(d.x, d.y, this.rangeOf(d), false), d.x, d.y);
+          d.target = this.nearest(this.inRange(d.x, d.y, this.rangeOf(d)), d.x, d.y);
           if (d.target) d.burst = 3;
           else d.cd = 0.3;
         }
@@ -1221,7 +1218,7 @@ export class DefenseScene {
       // 机甲：上半身转向目标，两臂的双联机炮左右交替连射；肩上导弹巢隔一阵齐射一轮。
       this.patrol(d, dt);
       if (d.burst <= 0 && d.cd <= 0) {
-        d.target = this.nearest(this.inRange(d.x, d.y, this.rangeOf(d), false), d.x, d.y);
+        d.target = this.nearest(this.inRange(d.x, d.y, this.rangeOf(d)), d.x, d.y);
         if (d.target) d.burst = 12;
         else d.cd = 0.25;
       }
@@ -1258,8 +1255,8 @@ export class DefenseScene {
       }
       d.missileCd -= dt;
       if (d.missileCd <= 0) {
-        const fl = this.inRange(d.x, d.y, MISSILE_RANGE, true);
-        const ground = fl.length ? [] : this.inRange(d.x, d.y, this.rangeOf(d), false);
+        const fl = this.inRange(d.x, d.y, MISSILE_RANGE, 'air');
+        const ground = fl.length ? [] : this.inRange(d.x, d.y, this.rangeOf(d));
         const pool = fl.length ? fl : ground;
         if (pool.length) {
           d.missileCd = (2.6 + Math.random() * 1.2) / this.stat(d.owner, 'rate');
@@ -1278,6 +1275,7 @@ export class DefenseScene {
               ty: t.y,
               tz: t.z + t.lift,
               t: -k * 0.09,
+              power: this.stat(d.owner, 'dmg'),
             });
           }
         } else d.missileCd = 0.5;
@@ -1479,78 +1477,130 @@ export class DefenseScene {
   }
 
   /**
-   * 过了防线的虫：朝目标走 step 这么远。别的地图直奔核心；建造模式先扑向附近的建筑 / 机甲
-   * （PREY_RANGE 以内最近的那个），附近没有就直奔核心；目标被打掉了就重新挑。
-   * 还没过防线就什么都不做，返回 false。
+   * 虫往前走 step 这么远：有目标就朝目标走（建筑朝占地上离它最近的那一点）；没有目标时，单通道地图在防线前
+   * 沿通道往下走（wob 是左右扭的那一点），过了防线、或者十字高地上，就朝核心走。
    */
-  private toCore(b: Bug, step: number): boolean {
-    // 十字高地：虫一出来就朝核心（或者路上碰到的建筑 / 机甲）冲，隔一会儿看看附近有没有新目标。
-    if (!this.cross && b.y <= LINE_Y + 10) return false;
-    if ((b.prey === undefined || (b.prey && !this.alive(b.prey)) || (b.prey === null && this.cross && Math.random() < 0.05)))
-      b.prey = this.pickPrey(b);
-    const goal = b.prey ? this.preyPoint(b.prey, b) : CORE;
+  private stepBug(b: Bug, step: number, wob: number): void {
+    let goal: Vec2 | null = b.prey ? this.foePoint(b.prey, b) : null;
+    if (!goal) {
+      if (!this.cross && b.y <= LINE_Y + 10) {
+        b.y += step;
+        b.x += wob;
+        return;
+      }
+      goal = CORE;
+    }
     const dx = goal.x - b.x;
     const dy = goal.y - b.y;
     const d = Math.hypot(dx, dy) || 1;
-    b.x += (dx / d) * Math.min(step, d);
-    b.y += (dy / d) * Math.min(step, d);
-    return true;
+    b.x += (dx / d) * Math.min(step, d) + (-dy / d) * wob * 0.5;
+    b.y += (dy / d) * Math.min(step, d) + (dx / d) * wob * 0.5;
   }
 
-  private mechNear(x: number, y: number): Defender | null {
-    return this.defenders.find((d) => d.kind === 'mech' && Math.abs(d.x - x) < 26 && Math.abs(d.y - y) < 24) ?? null;
-  }
-
-  private alive(t: Structure | Defender): boolean {
-    return 'kind' in t && (t.kind === 'rifle' || t.kind === 'mech') ? this.defenders.includes(t as Defender) : this.structures.includes(t as Structure);
-  }
-
-  /** 离虫最近的建筑 / 机甲（PREY_RANGE 以内）；没有就是 null（直奔核心）。 */
-  private pickPrey(b: Bug): Structure | Defender | null {
-    let best: Structure | Defender | null = null;
-    let bd = PREY_RANGE;
-    for (const s of this.structures) {
-      const p = this.preyPoint(s, b);
-      const d = Math.hypot(p.x - b.x, p.y - b.y);
+  /** 视野里离这只虫最近的目标（机枪兵、机甲、建筑、核心，按到目标边缘的距离）；没有就是 null。 */
+  private pickFoe(b: Bug): Foe | null {
+    let best: Foe | null = null;
+    let bd = ATTACK[b.kind].sight;
+    const consider = (t: Foe): void => {
+      const d = this.foeGap(t, b);
       if (d < bd) {
         bd = d;
-        best = s;
+        best = t;
       }
-    }
-    for (const m of this.defenders) {
-      if (m.kind !== 'mech') continue;
-      const d = Math.hypot(m.x - b.x, m.y - b.y);
-      if (d < bd) {
-        bd = d;
-        best = m;
-      }
-    }
+    };
+    for (const d of this.defenders) if (d.kind === 'mech' || d.deadT < 0) consider(d);
+    for (const st of this.structures) consider(st);
+    if (!this.lost) consider('core');
     return best;
   }
 
-  /** 扑向目标时朝哪个点走：建筑是占地上离虫最近的那一点，机甲是它本身。 */
-  private preyPoint(t: Structure | Defender, b: Bug): Vec2 {
+  private foeAlive(t: Foe): boolean {
+    if (t === 'core') return !this.lost;
+    if (t.kind === 'rifle') return t.deadT < 0 && this.defenders.includes(t);
+    if (t.kind === 'mech') return this.defenders.includes(t);
+    return this.structures.includes(t as Structure);
+  }
+
+  /** 朝目标走的那个点：机枪兵 / 机甲 / 核心是中心，建筑是占地上离虫最近的那一点。 */
+  private foePoint(t: Foe, b: Bug): Vec2 {
+    if (t === 'core') return CORE;
     if (t.kind === 'rifle' || t.kind === 'mech') return v2(t.x, t.y);
     const d = BUILDS[(t as Structure).kind];
     return v2(clamp(b.x, t.x - d.w / 2, t.x + d.w / 2), clamp(b.y, t.y - d.h / 2, t.y + d.h / 2));
   }
 
-  private preyReached(b: Bug): boolean {
-    const t = b.prey!;
-    if (!this.alive(t)) return false;
-    const p = this.preyPoint(t, b);
-    return Math.hypot(p.x - b.x, p.y - b.y) < (t.kind === 'mech' ? 14 : 5);
+  /** 虫到目标边缘的距离。 */
+  private foeGap(t: Foe, b: Bug): number {
+    const p = this.foePoint(t, b);
+    const r = t === 'core' ? CORE_R : t.kind === 'rifle' ? RIFLE_R : t.kind === 'mech' ? MECH_R : 0;
+    return Math.hypot(p.x - b.x, p.y - b.y) - r;
   }
 
-  /** 虫扑到建筑 / 机甲身上：咬一口（按撞核心的伤害表），自己炸成一摊（不给晶矿）。 */
-  private strike(b: Bug): void {
-    const t = b.prey!;
-    const dmg = CORE_DMG[b.kind];
-    if (t.kind === 'mech') this.hurtMech(t as Defender, dmg);
+  /** 够得着目标了没有（停下来打）。 */
+  private engaged(b: Bug): boolean {
+    return !!b.prey && this.foeAlive(b.prey) && this.foeGap(b.prey, b) <= ATTACK[b.kind].range;
+  }
+
+  /** 打中一个目标：机枪兵、机甲、建筑、核心各自扣血。 */
+  private hitFoe(t: Foe, dmg: number, src: string): void {
+    if (t === 'core') this.hurtCore(dmg);
+    else if (t.kind === 'rifle') this.hurtMarine(t as Defender, dmg, src);
+    else if (t.kind === 'mech') this.hurtMech(t as Defender, dmg);
     else this.hurtStructure(t as Structure, dmg);
-    this.addSplat({ x: b.x, y: b.y, t: 0, blobs: makeSplat(3 + BUG_SIZE[b.kind] * 2.4, 0, -1, true), blood: b.look.blood });
-    this.shatter(b, 0, -1, 0.3);
-    b.dead = 99;
+  }
+
+  /** 够得着就按自己的节奏打：近战扑咬，喷酸虫吐酸，刺蛇放一串地刺。 */
+  private bugAttack(b: Bug, dt: number, ground: number, engaged: boolean): void {
+    const atk = ATTACK[b.kind];
+    if (!engaged || !b.prey) {
+      // 没在打：动作收回去；冷却照走（走到下一个目标跟前，最多再等 0.4 秒就能出手）。
+      b.spit = Math.max(0, b.spit - dt * 4);
+      b.cd = Math.min(Math.max(0.4, b.cd - dt), b.cd);
+      return;
+    }
+    const t = b.prey;
+    const p = this.foePoint(t, b);
+    const dx = p.x - b.x;
+    const dy = p.y - b.y;
+    const d = Math.hypot(dx, dy) || 1;
+    b.cd -= dt;
+    if (b.kind === 'spitter') {
+      // 鼓起酸囊，往目标吐一口（落点带一点散布）。
+      b.spit = clamp(1 - b.cd / 0.8, 0, 1);
+      if (b.cd <= 0) {
+        b.cd = atk.every * (0.85 + Math.random() * 0.3);
+        const tx = p.x + (Math.random() - 0.5) * 16;
+        const ty = p.y + (Math.random() - 0.5) * 12;
+        this.globs.push({ from: v3(b.x, b.y + 9, ground + 8), to: v3(tx, ty, this.terrain.heightAt(tx, ty)), t: 0, dur: 0.5 + d / 400 });
+      }
+      return;
+    }
+    if (b.kind === 'serpent') {
+      // 慢慢举起骨镰，砸下去的一瞬间朝目标刺出一串地刺，像一道沿地面窜过去的裂缝。
+      b.spit = b.cd < 0.7 ? Math.min(1, b.spit + dt * 2) : Math.max(0, b.spit - dt * 5);
+      if (b.cd <= 0) {
+        b.cd = atk.every * (0.85 + Math.random() * 0.3);
+        b.spit = 0;
+        const ux = dx / d;
+        const uy = dy / d;
+        for (let k = 1; k <= 16; k++) {
+          const along = 10 + k * 10;
+          if (along > d + 14) break;
+          const side = Math.sin(k * 1.7) * 3;
+          this.spikes.push({ x: b.x + ux * along - uy * side, y: b.y + uy * along + ux * side, t: -k * 0.05, h: 10 + Math.random() * 6 });
+        }
+        this.fx.poof(b.x + ux * 8, b.y + uy * 8, 0, 0.4);
+      }
+      return;
+    }
+    // 近战：扑上去咬一口（身子往目标那边一冲），按冷却一下一下来。
+    if (b.cd <= 0) {
+      b.cd = atk.every * (0.85 + Math.random() * 0.3);
+      b.lunge = 1;
+      b.ax = dx / d;
+      b.ay = dy / d;
+      this.hitFoe(t, atk.dmg, b.kind);
+    }
   }
 
   /** 建造模式的机甲挨打：扣血、迸火星，打空就炸掉（车间看到少了一台会再造）。 */
@@ -1611,15 +1661,22 @@ export class DefenseScene {
     });
   }
 
-  /** 虫撞上核心：扣核心的血，虫自己炸成一摊（不给晶矿）。 */
-  private crash(b: Bug): void {
+  /** (x, y) 附近 r 以内的守军、建筑、核心都扣 dmg（酸液落地、地刺冒出来）。 */
+  private splashFoes(x: number, y: number, r: number, dmg: number, src: string): void {
+    for (const d of [...this.defenders]) {
+      const rr = r + (d.kind === 'mech' ? MECH_R : RIFLE_R);
+      if (Math.abs(d.x - x) < rr && Math.abs(d.y - y) < rr) this.hitFoe(d, dmg, src);
+    }
+    for (const st of this.structuresNear(x, y, r * 0.5)) this.hurtStructure(st, dmg);
+    if (Math.hypot(CORE.x - x, CORE.y - y) < r + CORE_R) this.hurtCore(dmg);
+  }
+
+  /** 核心挨打：扣血、闪白、轻轻一震；打空就碎。 */
+  private hurtCore(dmg: number): void {
     if (this.lost) return;
-    this.coreHp = Math.max(0, this.coreHp - CORE_DMG[b.kind]);
+    this.coreHp = Math.max(0, this.coreHp - dmg);
     this.coreHit = 1;
-    this.shake = Math.min(1, this.shake + 0.12);
-    this.addSplat({ x: b.x, y: b.y, t: 0, blobs: makeSplat(3 + BUG_SIZE[b.kind] * 2.4, b.x - CORE.x, b.y - CORE.y, true), blood: b.look.blood });
-    this.shatter(b, (b.x - CORE.x) / CORE_REACH, (b.y - CORE.y) / CORE_REACH, 0.3);
-    b.dead = 99;
+    this.shake = Math.min(1, this.shake + 0.04);
     if (this.coreHp <= 0) this.breakCore();
   }
 
@@ -1646,20 +1703,6 @@ export class DefenseScene {
         t: 0,
       });
     }
-  }
-
-  private marineNear(x: number, y: number, reach: number): Defender | null {
-    let best: Defender | null = null;
-    let bd = reach;
-    for (const d of this.defenders) {
-      if (d.kind !== 'rifle' || d.deadT >= 0) continue;
-      const dd = Math.hypot(d.x - x, (d.y - y) * 0.7);
-      if (dd < bd) {
-        bd = dd;
-        best = d;
-      }
-    }
-    return best;
   }
 
   /** 巨舰在不在场：别的地图看地图设定，建造模式要买了才有。 */
@@ -1762,7 +1805,6 @@ export class DefenseScene {
       const pool = this.bugs.filter(
             (b) =>
               b.dead < 0 &&
-              b.kind !== 'flyer' &&
               inRange(b) &&
               (this.cross ? Math.hypot(b.x - CORE.x, b.y - CORE.y) > 160 : b.y > 40 && b.y < LINE_Y - 130),
           );
@@ -1898,12 +1940,13 @@ export class DefenseScene {
     const size = waveSize(this.wave, this.field.waveScale, this.field.waves);
     this.nextIn = this.wave < this.field.waves ? waveGap(this.wave) : 0;
     this.sinceLaunch = 0;
-    // 先冲出来的一群：立刻刷出来（场上装得下多少出多少），从地图顶边往下铺成一长片（越多铺得越长），一路压下来。
+    // 先冲出来的一群：立刻刷出来（场上装得下多少出多少），在画面外面往外拉成一长串（越多拉得越长），
+    // 最前头的马上走进画面，后面的一只接一只跟进来。
     const burst = Math.max(1, Math.round(size * WAVE_BURST));
     const n = Math.max(0, Math.min(burst, this.field.maxAlive - this.aliveCount()));
     const len = Math.min(WAVE_STRING_MAX, WAVE_STRING_MIN + n * WAVE_STRING);
-    // 分层撒：每只落在自己那一小段里，整片铺得匀，虫少时前头也一定有几只在镜头里。
-    for (let i = 0; i < n; i++) this.spawn(TOP_Y - 30 + (len * (i + Math.random())) / n);
+    // 分层撒：每只落在自己那一小段里，一串铺得匀。
+    for (let i = 0; i < n; i++) this.spawn((len * (i + Math.random())) / n);
     // 剩下的（加上场上装不下的那部分）在这一波的时间里匀速涌出来。
     const left = size - n;
     if (left > 0) this.streams.push({ left, rate: (left / (waveGap(this.wave) * STREAM_SPAN)) * this.field.pace, acc: 0 });
@@ -2049,11 +2092,17 @@ export class DefenseScene {
     return true;
   }
 
-  /** 卖掉一座建筑：退还总花费的 70%，原地冒一团烟就没了，它造出来的兵和机甲也一起撤走。 */
+  /** 卖掉能退多少：总花费的 SELL_REFUND，再按剩下的血量打折（快被打爆了再卖，退得就少）。 */
+  private refundOf(s: Structure): number {
+    const hp = clamp(s.hp / BUILDS[s.kind].hp, 0, 1);
+    return Math.round(s.spent * SELL_REFUND * hp);
+  }
+
+  /** 卖掉一座建筑：退还总花费的 70%（再按剩下的血量打折，见 refundOf），原地冒一团烟就没了，它造出来的兵和机甲也一起撤走。 */
   sell(id: number): boolean {
     const s = this.structures.find((o) => o.id === id);
     if (!s) return false;
-    this.crystals += Math.round(s.spent * SELL_REFUND);
+    this.crystals += this.refundOf(s);
     const d = BUILDS[s.kind];
     this.fx.poof(s.x, s.y, 0, 1.6);
     this.fx.poof(s.x + d.w * 0.3, s.y + d.h * 0.3, 0, 1);
@@ -2129,7 +2178,7 @@ export class DefenseScene {
       hp: s.hp,
       maxHp: d.hp,
       // 巨舰不能卖（-1）。
-      refund: s === this.cruiserS ? -1 : Math.round(s.spent * SELL_REFUND),
+      refund: s === this.cruiserS ? -1 : this.refundOf(s),
       stats: d.stats.map((st) => {
         const lv = s.up[st.key];
         const max = st.values.length;
@@ -2502,7 +2551,7 @@ export class DefenseScene {
         g.retarget -= dt;
         const lost = !g.target || g.target.dead >= 0 || (g.target.x - g.x) ** 2 + (g.target.y - g.y) ** 2 > this.gunRange(g) ** 2;
         if (lost || g.retarget <= 0) {
-          const list = this.inRange(g.x, g.y, this.gunRange(g), false);
+          const list = this.inRange(g.x, g.y, this.gunRange(g));
           // 在射界里随机抽几只，挑周围同伴最多、又不用大幅转炮塔的那只。
           let best: Bug | null = null;
           let bestScore = -Infinity;
@@ -2533,31 +2582,52 @@ export class DefenseScene {
         if (g.cd <= 0 && t && aligned) {
           g.cd = (2.2 + Math.random() * 1.6) / this.stat(g.owner, 'rate');
           g.recoil = 1;
+          // 炮口：炮塔转轴在车体中心往后 2（models.ts 的 siegeTank），炮管从转轴往前伸到 61，高 18.8。
           const dir = g.yaw + g.aim;
-          const from = v3(g.x + Math.cos(dir) * 46, g.y + Math.sin(dir) * 46, this.terrain.heightAt(g.x, g.y) + 16.5);
+          const px = g.x - Math.cos(g.yaw) * 2;
+          const py = g.y - Math.sin(g.yaw) * 2;
+          const from = v3(px + Math.cos(dir) * 62, py + Math.sin(dir) * 62, this.terrain.heightAt(g.x, g.y) + 18.8);
           const dist = Math.hypot(t.x - from.x, t.y - from.y);
           this.shells.push({ from, to: v3(t.x, t.y, this.terrain.heightAt(t.x, t.y)), t: 0, dur: dist / 650, arc: 5, size: 0.9, power: this.stat(g.owner, 'dmg') });
           this.fx.muzzle(from.x, from.y, from.z);
           this.fx.muzzle(from.x, from.y, from.z);
         }
       } else {
+        // 贴到炮塔跟前（AA_MIN 以内）的虫打不了（炮管压不下去，子弹会从炮口倒着飞回去），换一只。
+        if (g.target && Math.hypot(g.target.x - g.x, g.target.y - g.y) < AA_MIN) g.target = null;
         if (!g.target || g.target.dead >= 0) {
           const range = this.gunRange(g);
-          const fl = this.inRange(g.x, g.y, range, true);
-          // 建造模式的火炮：没有飞虫就打地面上最近的那只。
-          const pool = fl.length ? fl : this.inRange(g.x, g.y, range, false);
-          g.target = this.nearest(pool, g.x, g.y);
+          const fl = this.inRange(g.x, g.y, range, 'air');
+          // 火炮：先打飞虫，没有就打地面；炮塔转得慢，所以挑"近、又不用大转"的那只（每多转 1 弧度算远 AA_TURN_COST）。
+          const pool = fl.length ? fl : this.inRange(g.x, g.y, range);
+          let best: Bug | null = null;
+          let bestScore = Infinity;
+          for (const c of pool) {
+            if (Math.hypot(c.x - g.x, c.y - g.y) < AA_MIN) continue;
+            const want = Math.atan2(c.y - g.y, c.x - g.x) - g.yaw;
+            const turn = Math.abs(Math.atan2(Math.sin(want - g.aim), Math.cos(want - g.aim)));
+            const score = Math.hypot(c.x - g.x, c.y - g.y) + turn * AA_TURN_COST;
+            if (score < bestScore) {
+              bestScore = score;
+              best = c;
+            }
+          }
+          g.target = best;
         }
         const t = g.target;
         const tx = t ? t.x : g.x + Math.sin(this.time * 0.5) * 80;
         const ty = t ? t.y : g.y - 200;
         const tz = t ? t.lift + t.z : 60;
+        // 炮塔转得慢（AA_TURN 弧度 / 秒，快到位时再减速），炮管对准了（AA_AIM 以内）才开火 —— 换目标要先把炮塔摆过去，
+        // 这段时间不打；子弹沿炮管方向出去，和炮管一致。
         const want = Math.atan2(ty - g.y, tx - g.x) - g.yaw;
-        g.aim += clamp(Math.atan2(Math.sin(want - g.aim), Math.cos(want - g.aim)), -dt * 2.2, dt * 2.2);
+        const err = Math.atan2(Math.sin(want - g.aim), Math.cos(want - g.aim));
+        const turn = Math.min(AA_TURN, Math.abs(err) * 6 + 0.3);
+        g.aim += clamp(err, -dt * turn, dt * turn);
         const pitchWant = Math.atan2(tz - 14, Math.hypot(tx - g.x, ty - g.y));
         g.pitch += clamp(pitchWant - g.pitch, -dt, dt);
-        if (t && g.cd <= 0) {
-          g.cd = 0.11 / this.stat(g.owner, 'rate');
+        if (t && g.cd <= 0 && Math.abs(err) < AA_AIM) {
+          g.cd = AA_INTERVAL / this.stat(g.owner, 'rate');
           g.barrel = -g.barrel;
           g.recoil = g.barrel;
           const dir = g.yaw + g.aim;
@@ -2568,13 +2638,16 @@ export class DefenseScene {
             g.y + Math.sin(dir) * (L + 4) + side.y * 3.2 * g.barrel,
             this.terrain.heightAt(g.x, g.y) + 13 + 33 * Math.sin(g.pitch),
           );
-          // 打飞虫一发命中就炸；打地面命中率高一些、按攻击力扣血。
+          // 打飞虫一发命中就炸；打地面按攻击力扣血。没打中的落点沿炮管方向散开（不会偏到别的方向去）。
           const ground = t.lift <= 20;
-          const hit = Math.random() < (ground ? 0.5 : 0.18);
+          const hit = Math.random() < (ground ? AA_HIT_GROUND : 0.18);
+          const dist = Math.hypot(t.x - g.x, t.y - g.y);
+          const spread = (Math.random() - 0.5) * 0.08;
+          const along = dist + (Math.random() - 0.4) * 40;
           const to = hit
             ? v3(t.x, t.y, t.z + t.lift)
-            : v3(t.x + (Math.random() - 0.5) * 30, t.y + (Math.random() - 0.5) * 30, t.z + t.lift + (Math.random() - 0.3) * 30);
-          this.fire('aa', from, to, t, hit, t.x, t.y + 10, true, 1.5 * this.stat(g.owner, 'dmg'));
+            : v3(g.x + Math.cos(dir + spread) * along, g.y + Math.sin(dir + spread) * along, t.z + t.lift + (Math.random() - 0.3) * 30);
+          this.fire('aa', from, to, t, hit, t.x, t.y + 10, true, AA_DMG * this.stat(g.owner, 'dmg'));
           this.flash(from, 2.2, rgb(255, 220, 130));
           this.fx.muzzle(from.x, from.y, from.z);
         }
@@ -2611,7 +2684,7 @@ export class DefenseScene {
         if (m.target && m.target.kind === 'flyer' && m.target.dead < 0 && d < 12) {
           this.fx.explode(m.x, m.y, m.z, 0.5);
           this.hurt(m.target, 99, m.x, m.y + 10, 0.7);
-        } else if (m.z - ground < 15) this.explode(m.x, m.y, 0.55);
+        } else if (m.z - ground < 15) this.explode(m.x, m.y, 0.55, m.power);
         else this.fx.explode(m.x, m.y, m.z, 0.4);
         this.missiles.splice(i, 1);
       }
@@ -2660,13 +2733,7 @@ export class DefenseScene {
       if (g.t >= g.dur) {
         this.addSplat({ x: g.to.x, y: g.to.y, t: 0, blobs: makeSplat(5, 0, 1, true), blood: [rgb(110, 200, 40), rgb(220, 255, 120)] });
         this.fx.poof(g.to.x, g.to.y, g.to.z, 0.8);
-        const m = this.marineNear(g.to.x, g.to.y, 12);
-        if (m) this.hurtMarine(m, ACID_DMG, 'acid');
-        {
-          const mech = this.mechNear(g.to.x, g.to.y);
-          if (mech) this.hurtMech(mech, ACID_DMG);
-          for (const st of this.structuresNear(g.to.x, g.to.y, 6)) this.hurtStructure(st, ACID_DMG);
-        }
+        this.splashFoes(g.to.x, g.to.y, SPLASH, ATTACK.spitter.dmg, 'acid');
         this.globs.splice(i, 1);
       }
     }
@@ -2676,12 +2743,7 @@ export class DefenseScene {
       s.t += dt;
       if (before < 0 && s.t >= 0) {
         this.fx.poof(s.x, s.y, this.terrain.heightAt(s.x, s.y), 0.5);
-        const m = this.marineNear(s.x, s.y, 9);
-        if (m) this.hurtMarine(m, SPIKE_DMG, 'spike');
-        {
-          const mech = this.mechNear(s.x, s.y);
-          if (mech) this.hurtMech(mech, SPIKE_DMG);
-        }
+        this.splashFoes(s.x, s.y, 8, ATTACK.serpent.dmg, 'spike');
       }
       if (s.t > 0.7) this.spikes.splice(i, 1);
     }
@@ -3108,7 +3170,9 @@ export class DefenseScene {
 
     for (const b of this.bugs) {
       if (b.dead > 50) continue;
-      const root = cam.worldToScreenZ(b.x, b.y, b.z + b.lift);
+      // 近战扑咬：身子往目标那边冲一小下。
+      const lk = Math.sin(b.lunge * Math.PI) * 4;
+      const root = cam.worldToScreenZ(b.x + b.ax * lk, b.y + b.ay * lk, b.z + b.lift);
       if (root.x < -30 || root.x > cam.viewWidth + 30 || root.y < -60 || root.y > cam.viewHeight + 30) continue;
       if (b.lift > 2) {
         const sh = cam.worldToScreenZ(b.x, b.y, b.z);

@@ -287,6 +287,12 @@ export function bootDefense(app: Application): DefenseHandle {
       seenH = app.screen.height;
       fit();
     }
+    // 告诉战场镜头看到哪儿（刷怪刷在画面外面）。
+    {
+      const a = cam.screenToWorld(0, 0);
+      const z = cam.screenToWorld(cam.viewWidth, cam.viewHeight);
+      battle.view = { l: a.x, t: a.y, r: z.x, b: z.y };
+    }
     if (!(battle.lost && battle.lostT > LOST_FREEZE)) battle.update(dt);
     // 钱被花掉了（比如刚升级）：虚影跟着变红。
     if (battle.ghost && placing) battle.ghost.valid = battle.placeable(placing, battle.ghost.x, battle.ghost.y) && battle.crystals >= BUILDS[placing].cost;

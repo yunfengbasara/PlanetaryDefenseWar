@@ -12,7 +12,7 @@ import { LIVERY_BLUE, aaTurret, barracks, battlecruiser, gunship, mechFactory, s
  *   巨舰          不是建筑：一局买一次，战列巡航舰飞到战场旁边待命，隔一阵开一发主炮
  *   轰炸支援      不是建筑：花一笔晶矿，立刻叫一组炮艇沿通道投弹
  *
- * 每条升级线各自独立升级（各 3 级）。
+ * 每条升级线各自独立升级（各 4 级，见下面的 DMG / RATE / RANGE / SPEED）。
  */
 
 /** cruiser（巨舰）不在建造列表里放置，买下后停在战场旁边；在这里登记只是为了升级面板和升级线。 */
@@ -48,12 +48,23 @@ export interface BuildDef {
   stats: StatDef[];
 }
 
-/** 几条通用的升级线：攻击力、射程、射速。 */
-const DMG = (costs: number[]): StatDef => ({ key: 'dmg', name: '攻击力', values: [1, 1.5, 2], costs });
-const RANGE = (costs: number[]): StatDef => ({ key: 'range', name: '射程', values: [1, 1.15, 1.3], costs });
-const RATE = (costs: number[]): StatDef => ({ key: 'rate', name: '射速', values: [1, 1.3, 1.6], costs });
+/**
+ * 升级线：每条 4 级（Lv1 是造好时的样子，再升 3 次）。
+ *
+ *   攻击力    ×1 → 1.5 → 2.2 → 3.2     每级大约 +50%，越往后加得越多（打后期的大群全靠它）
+ *   射速      ×1 → 1.2 → 1.45 → 1.75
+ *   射程      ×1 → 1.1 → 1.2 → 1.3     射程加太多会让炮台在后方就把虫清光，所以加得最少
+ *   生产速度  ×1 → 1.25 → 1.55 → 1.9
+ *
+ * 价钱按建筑造价走：第 2、3、4 级分别是造价的 0.6、1.2、2.4 倍（每级翻一倍），取整到 10。
+ * 数量线单独写在各建筑里。
+ */
+const tier = (cost: number): number[] => [0.6, 1.2, 2.4].map((k) => Math.round((cost * k) / 10) * 10);
+const DMG = (cost: number): StatDef => ({ key: 'dmg', name: '攻击力', values: [1, 1.5, 2.2, 3.2], costs: tier(cost) });
+const RANGE = (cost: number): StatDef => ({ key: 'range', name: '射程', values: [1, 1.1, 1.2, 1.3], costs: tier(cost * 0.8) });
+const RATE = (cost: number): StatDef => ({ key: 'rate', name: '射速', values: [1, 1.2, 1.45, 1.75], costs: tier(cost) });
 /** 生产速度：造一个单位的时间除以这个倍率。 */
-const SPEED = (costs: number[]): StatDef => ({ key: 'speed', name: '生产速度', values: [1, 1.3, 1.6], costs });
+const SPEED = (cost: number): StatDef => ({ key: 'speed', name: '生产速度', values: [1, 1.25, 1.55, 1.9], costs: tier(cost * 0.8) });
 
 export const BUILDS: Record<BuildKind, BuildDef> = {
   barracks: {
@@ -67,7 +78,7 @@ export const BUILDS: Record<BuildKind, BuildDef> = {
     top: 38,
     time: 4,
     unit: '士兵',
-    stats: [{ key: 'count', name: '士兵数量', values: [5, 8, 11], costs: [200, 350] }, SPEED([150, 300]), DMG([150, 300]), RANGE([120, 250]), RATE([150, 300])],
+    stats: [{ key: 'count', name: '士兵数量', values: [5, 7, 9, 12], costs: [200, 400, 800] }, SPEED(150), DMG(150), RANGE(150), RATE(150)],
   },
   factory: {
     kind: 'factory',
@@ -80,7 +91,7 @@ export const BUILDS: Record<BuildKind, BuildDef> = {
     top: 56,
     time: 10,
     unit: '机甲',
-    stats: [{ key: 'count', name: '机甲数量', values: [1, 2, 3], costs: [400, 600] }, SPEED([250, 450]), DMG([250, 450]), RANGE([200, 350]), RATE([250, 450])],
+    stats: [{ key: 'count', name: '机甲数量', values: [1, 2, 3, 4], costs: [400, 800, 1600] }, SPEED(300), DMG(300), RANGE(300), RATE(300)],
   },
   tank: {
     kind: 'tank',
@@ -91,18 +102,18 @@ export const BUILDS: Record<BuildKind, BuildDef> = {
     w: 44,
     h: 60,
     top: 22,
-    stats: [DMG([200, 350]), RANGE([180, 300]), RATE([200, 350])],
+    stats: [DMG(200), RANGE(200), RATE(200)],
   },
   artillery: {
     kind: 'artillery',
     name: '火炮',
-    desc: '双管速射炮，优先打飞虫',
-    cost: 150,
+    desc: '双管速射炮，专打飞虫，也能补打地面；炮塔转得慢',
+    cost: 250,
     hp: 80,
     w: 30,
     h: 30,
     top: 24,
-    stats: [DMG([150, 300]), RANGE([120, 250]), RATE([150, 300])],
+    stats: [DMG(250), RANGE(250), RATE(250)],
   },
   cruiser: {
     kind: 'cruiser',
@@ -113,7 +124,7 @@ export const BUILDS: Record<BuildKind, BuildDef> = {
     w: 0,
     h: 0,
     top: 60,
-    stats: [DMG([600, 1000]), RANGE([400, 800]), RATE([600, 1000])],
+    stats: [DMG(1000), RANGE(1000), RATE(1000)],
   },
 };
 
