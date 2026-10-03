@@ -60,8 +60,7 @@ createApp().then((app) => {
     hints.update(dt, st, (t) => {
       if (t === 'build:barracks') return build.itemRect('barracks', stage);
       if (t === 'area:base') return game.buildAreaRect();
-      if (t === 'rally:barracks') return game.rallyAreaRect('barracks');
-      return game.structureRect('barracks');
+      return game.rallyAreaRect('barracks');
     });
     hud.update(st, dt);
     build.update(st);

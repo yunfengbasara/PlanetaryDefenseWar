@@ -7,16 +7,16 @@ import type { BattleState, CssRect } from '../game/main';
  *             描一圈会呼吸的亮框，里面照常能点、能拖、能滚轮。没有 target 的步骤整屏压暗。
  *   面板      贴在 target 旁边（左、右、下、上，哪边放得下放哪边）；没有 target 就放在左下角。
  *   普通的一步      有"下一步"按钮（最后一步是"开始战斗"）
- *   要玩家动手的一步 没有"下一步"，等玩家做到了（比如造好兵营）自动进入下一步
+ *   要玩家动手的一步 没有"下一步"，玩家做到了（比如造好兵营）立刻进入下一步
  *
  * 随时可以"跳过引导"。走完或跳过都会调 onDone —— 外面在那时开始刷怪。
  * target 每帧由外面换算成舞台上的矩形（镜头动了，挖空的地方跟着走）。样式在 style.ts 的 .pdw-hint、.pdw-mask。
  */
 
 /** 要等玩家做到的事。 */
-export type GuideWait = 'placing-barracks' | 'built-barracks' | 'marine' | 'selected' | 'rally';
-/** 这一步要亮出来的地方：建造列表里的某一项、建造区、地图上的某座建筑、某座兵营连同它的集结点范围。 */
-export type GuideTarget = 'build:barracks' | 'area:base' | 'struct:barracks' | 'rally:barracks';
+export type GuideWait = 'placing-barracks' | 'built-barracks' | 'rally';
+/** 这一步要亮出来的地方：建造列表里的某一项、建造区、某座兵营连同它的集结点范围。 */
+export type GuideTarget = 'build:barracks' | 'area:base' | 'rally:barracks';
 
 export interface GuideStep {
   text: string;
@@ -27,13 +27,9 @@ export interface GuideStep {
 const DONE: Record<GuideWait, (st: BattleState) => boolean> = {
   'placing-barracks': (st) => st.build?.placing === 'barracks' || (st.build?.built.barracks ?? 0) > 0,
   'built-barracks': (st) => (st.build?.built.barracks ?? 0) > 0,
-  marine: (st) => (st.build?.marines ?? 0) > 0,
-  selected: (st) => st.build?.selectedEver ?? false,
   rally: (st) => st.build?.rallyEver ?? false,
 };
 
-/** 做到了以后停多久再翻下一步（让玩家看清自己做成了）。 */
-const ADVANCE_DELAY = 0.6;
 /** 挖空的地方比目标外扩多少、面板离挖空处多远（CSS 像素）。 */
 const PAD = 8;
 const GAP = 14;
@@ -45,7 +41,6 @@ export class TutorialHints {
   private readonly frame = document.createElement('div');
   private steps: GuideStep[] = [];
   private index = -1;
-  private doneT = -1;
   private onDone: (() => void) | null = null;
 
   constructor(private readonly host: HTMLElement) {
@@ -93,19 +88,14 @@ export class TutorialHints {
   }
 
   /** 每帧：看这一步做到了没有；把遮罩的洞和面板对到 target 现在在屏幕上的位置。 */
-  update(dt: number, st: BattleState | null, locate: (t: GuideTarget) => CssRect | null): void {
+  update(_dt: number, st: BattleState | null, locate: (t: GuideTarget) => CssRect | null): void {
     if (this.index < 0 || !st) return;
+    // 做到了就立刻翻到下一步，然后当帧就按新的一步摆遮罩：遮罩直接跳过去，不在上一步停留。
     const step = this.steps[this.index];
-    this.layout(step.target ? locate(step.target) : null);
-    if (!step.wait) return;
-    if (this.doneT < 0 && DONE[step.wait](st)) {
-      this.doneT = 0;
-      this.el.classList.add('done');
-    }
-    if (this.doneT >= 0) {
-      this.doneT += dt;
-      if (this.doneT >= ADVANCE_DELAY) this.show(this.index + 1);
-    }
+    if (step.wait && DONE[step.wait](st)) this.show(this.index + 1);
+    if (this.index < 0) return;
+    const now = this.steps[this.index];
+    this.layout(now.target ? locate(now.target) : null);
   }
 
   /** 摆遮罩和面板。hole 为 null：整屏压暗，面板放左下角。 */
@@ -166,14 +156,13 @@ export class TutorialHints {
       return;
     }
     this.index = i;
-    this.doneT = -1;
     const step = this.steps[i];
     const last = i === this.steps.length - 1;
     this.el.querySelector('.pdw-hint-step')!.textContent = `${i + 1} / ${this.steps.length}`;
     this.el.querySelector('.pdw-hint-text')!.textContent = step.text;
     this.el.querySelector('[data-act=next] span')!.textContent = last ? '开始战斗' : '下一步';
     this.el.classList.toggle('waiting', !!step.wait);
-    this.el.classList.remove('done', 'hidden');
+    this.el.classList.remove('hidden');
     this.mask.classList.remove('hidden');
   }
 }

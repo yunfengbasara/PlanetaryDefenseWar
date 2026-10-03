@@ -190,13 +190,14 @@ export const MAPS: MapInfo[] = [
   },
 ];
 
+/** 商城（只有样子）：icon 是图标画哪个模型（menu/shopIcons.ts）。 */
 export const SHOP_ITEMS = [
-  { name: '强化装甲', desc: '机枪兵生命 +20%', price: 800, tag: '守军' },
-  { name: '穿甲弹匣', desc: '步枪伤害 +15%', price: 1200, tag: '火力' },
-  { name: '快速征召', desc: '兵营造兵时间 -1 秒', price: 1500, tag: '后勤' },
-  { name: '导弹巢扩容', desc: '机甲每轮多发 2 枚导弹', price: 2000, tag: '机甲' },
-  { name: '主炮校准', desc: '战列巡航舰冷却 -20%', price: 2600, tag: '舰队' },
-  { name: '涂装：猩红', desc: '全军换上红黑涂装', price: 3000, tag: '外观' },
+  { icon: 'marine' as const, name: '强化装甲', desc: '机枪兵生命 +20%', price: 800, tag: '守军' },
+  { icon: 'ammo' as const, name: '穿甲弹匣', desc: '步枪伤害 +15%', price: 1200, tag: '火力' },
+  { icon: 'barracks' as const, name: '快速征召', desc: '兵营造兵时间 -1 秒', price: 1500, tag: '后勤' },
+  { icon: 'mech' as const, name: '导弹巢扩容', desc: '机甲每轮多发 2 枚导弹', price: 2000, tag: '机甲' },
+  { icon: 'cruiser' as const, name: '主炮校准', desc: '战列巡航舰冷却 -20%', price: 2600, tag: '舰队' },
+  { icon: 'livery' as const, name: '涂装：猩红', desc: '全军换上红黑涂装', price: 3000, tag: '外观' },
 ];
 
 export const ACHIEVEMENTS = [

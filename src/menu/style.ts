@@ -301,11 +301,11 @@ export const MENU_CSS = `
   background: rgba(20,30,52,.6); border: 2px solid var(--line);
 }
 .pdw-item-art {
-  height: 72px; margin-bottom: 4px;
-  background:
-    linear-gradient(135deg, transparent 45%, rgba(240,150,58,.35) 45% 55%, transparent 55%),
-    repeating-linear-gradient(45deg, #121c34 0 6px, #0e1628 6px 12px);
+  display: grid; place-items: center; height: 76px; margin-bottom: 4px;
+  background: radial-gradient(ellipse at 50% 70%, rgba(130, 166, 240, .2), transparent 70%), #0b1020;
+  border: 1px solid var(--line);
 }
+.pdw-item-art canvas { width: 128px; height: 72px; image-rendering: pixelated; }
 .pdw-item small { color: var(--muted); font-size: 12px; min-height: 2.8em; }
 .pdw-tag { position: absolute; top: 14px; left: 14px; padding: 1px 6px; font-size: 10px; background: var(--blue); }
 .pdw-btn.buy { height: 30px; font-size: 13px; letter-spacing: 1px; }
@@ -356,9 +356,6 @@ export const MENU_CSS = `
 .pdw-hint-wait i { width: 7px; height: 7px; background: var(--orange); animation: pdw-blink 1s steps(2) infinite; }
 .pdw-hint.waiting .pdw-hint-wait { display: flex; }
 .pdw-hint.waiting [data-act=next] { display: none; }
-.pdw-hint.done { border-color: var(--green); }
-.pdw-hint.done .pdw-hint-wait { color: var(--green); }
-.pdw-hint.done .pdw-hint-wait i { background: var(--green); animation: none; }
 .pdw-hint-actions .pdw-btn { height: 30px; padding: 0 12px; font-size: 12px; }
 
 /* ---------------------------------------------------------------- 局内 HUD */

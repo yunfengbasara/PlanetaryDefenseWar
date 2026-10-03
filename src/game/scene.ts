@@ -47,7 +47,7 @@ const TANK_RANGE = 330;
 const AA_RANGE = 320;
 
 /** 动力装甲：深蓝的甲片、橙色的饰条、发光的橙色面罩（帽檐那一块就是面罩）。 */
-const MARINE_KIT: Kit = {
+export const MARINE_KIT: Kit = {
   ...makeKit({ shirt: rgb(66, 94, 160), trim: rgb(240, 150, 50), trousers: rgb(52, 62, 94), cap: rgb(78, 104, 170) }),
   capShade: rgb(255, 176, 60),
   shirtLight: rgb(130, 160, 220),
@@ -58,7 +58,7 @@ const MARINE_KIT: Kit = {
   shoe: rgb(50, 60, 90),
   shoeDark: rgb(26, 30, 44),
 };
-const MARINE_SCALE = 1.18;
+export const MARINE_SCALE = 1.18;
 /** 机枪兵的血量、各种伤害。 */
 const MARINE_HP = 30;
 /** 建造模式：机甲的血量（建筑的血量在 buildings.ts）。 */
@@ -124,7 +124,7 @@ const MOON_DEBRIS = [rgb(150, 150, 156), rgb(120, 118, 126), rgb(176, 174, 180)]
 
 const SPINE = RigSpec.chestZ - RigSpec.hipZ;
 
-function aimPose(pose: Pose, recoil: number): void {
+export function aimPose(pose: Pose, recoil: number): void {
   walkPose(pose, 0, 0);
   pose.hip = v3(0, -0.3 - recoil * 0.3, RigSpec.hipZ - 0.3);
   // 两脚分开站：前后错开、左右也拉开，装甲腿粗，站窄了两条腿就并成一块。
@@ -1856,7 +1856,13 @@ export class DefenseScene {
   /** 把一座建筑的某条升级线升一级；满级、没有这条线或钱不够返回 false。 */
   /** 按编号找：建筑，或者（编号 CRUISER_ID）巨舰。 */
   private findS(id: number): Structure | null {
-    if (id === CRUISER_ID) return this.cruiserOn ? this.cruiserS : null;
+    if (id === CRUISER_ID) {
+      if (!this.cruiserOn) return null;
+      // 巨舰飞进场、右键挪位置的途中也要对得上（升级面板跟着它走）。
+      this.cruiserS.x = this.cruiser.x;
+      this.cruiserS.y = this.cruiser.y;
+      return this.cruiserS;
+    }
     return this.structures.find((o) => o.id === id) ?? null;
   }
 

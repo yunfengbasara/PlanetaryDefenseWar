@@ -44,8 +44,7 @@ export interface DefenseHandle {
   nextWave(): number;
   /** 选中的建筑变了（点到建筑 / 点到空地）。 */
   onSelect(fn: (id: number | null) => void): void;
-  /** 引导遮罩用：某种建筑（第一座）在舞台上框住它的矩形；建造区在舞台上的矩形。CSS 像素。 */
-  structureRect(kind: BuildKind): CssRect | null;
+  /** 引导遮罩用：建造区在舞台上的矩形。CSS 像素。 */
   buildAreaRect(): CssRect | null;
   /** 某种出兵建筑（第一座）连同它整个集结点范围在舞台上的矩形。 */
   rallyAreaRect(kind: BuildKind): CssRect | null;
@@ -84,9 +83,8 @@ export interface BuildState {
   marines: number;
   /** 巨舰：这张图能不能买、买了没有。 */
   cruiser: 'available' | 'bought' | 'none';
-  /** 当前选中的建筑；selectedEver：玩家点开过建筑；rallyEver：玩家设过集结点（引导用）。 */
+  /** 当前选中的建筑；rallyEver：玩家设过集结点（引导用）。 */
   selected: number | null;
-  selectedEver: boolean;
   rallyEver: boolean;
 }
 
@@ -111,7 +109,6 @@ export function bootDefense(app: Application): DefenseHandle {
   let userGrain = 0;
   let pan = v2(0, 0);
   let placing: BuildKind | null = null;
-  let selectedEver = false;
   let rallyEver = false;
   const selectHooks: ((id: number | null) => void)[] = [];
 
@@ -174,7 +171,6 @@ export function bootDefense(app: Application): DefenseHandle {
   const select = (id: number | null): void => {
     if (!battle) return;
     battle.selected = id;
-    if (id !== null) selectedEver = true;
     for (const fn of selectHooks) fn(id);
   };
   /** 鼠标最后在地面上的哪儿（换了要放的建筑时，虚影立刻出现在这里，不用等鼠标动）。 */
@@ -294,7 +290,6 @@ export function bootDefense(app: Application): DefenseHandle {
       useField(fieldId);
       battle = new DefenseScene();
       placing = null;
-      selectedEver = false;
       rallyEver = false;
       pan = v2(0, 0);
       fit();
@@ -335,7 +330,6 @@ export function bootDefense(app: Application): DefenseHandle {
           marines: b.defenders.filter((d) => d.kind === 'rifle' && d.deadT < 0).length,
           cruiser: !b.field.cruiser ? 'none' : b.cruiserBought ? 'bought' : 'available',
           selected: b.selected,
-          selectedEver,
           rallyEver,
         }
       };
@@ -375,12 +369,6 @@ export function bootDefense(app: Application): DefenseHandle {
     startWaves: () => battle?.startWaves(),
     nextWave: () => battle?.callNextWave() ?? -1,
     onSelect: (fn) => selectHooks.push(fn),
-    structureRect: (kind) => {
-      const s = battle?.structures.find((o) => o.kind === kind);
-      if (!s) return null;
-      const d = BUILDS[kind];
-      return boxToCss(s.x - d.w / 2, s.y - d.h / 2, s.x + d.w / 2, s.y + d.h / 2, d.top);
-    },
     rallyAreaRect: (kind) => {
       const s = battle?.structures.find((o) => o.kind === kind);
       if (!s) return null;

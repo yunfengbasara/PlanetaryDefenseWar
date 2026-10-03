@@ -31,6 +31,9 @@ export async function createApp(): Promise<Application> {
 
   const stage = document.createElement('div');
   stage.id = 'stage';
+  // 整个舞台都不弹浏览器的右键菜单：右键在游戏里有用（取消放置、设集结点、挪巨舰），
+  // 点在遮罩、面板这些界面元素上时也不该冒出系统菜单。
+  stage.addEventListener('contextmenu', (e) => e.preventDefault());
   document.getElementById('app')!.appendChild(stage);
 
   const app = new Application();

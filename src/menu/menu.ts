@@ -8,6 +8,7 @@ import { Projection } from '../render/projection';
 import { Projector } from '../render/projector';
 import { Snapshotter } from '../render/snapshot';
 import { ACHIEVEMENTS, MAPS, type MapInfo, SHOP_ITEMS } from './data';
+import { shopIcon } from './shopIcons';
 import { MENU_CSS } from './style';
 
 /**
@@ -400,6 +401,10 @@ export class MainMenu {
       if (e.target === m) this.closeModal();
     });
     m.querySelector('.pdw-x')!.addEventListener('click', () => this.closeModal());
+    // 商城：每件商品的图标用游戏模型现画。
+    if (which === 'shop') {
+      m.querySelectorAll('.pdw-item-art').forEach((art, i) => art.appendChild(shopIcon(this.snap, SHOP_ITEMS[i].icon)));
+    }
     this.root.appendChild(m);
     this.modal = m;
   }
