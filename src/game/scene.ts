@@ -8,7 +8,7 @@ import { LIVERY_BLUE, aaTurret, battlecruiser, bomb, crystalCore, gunship, siege
 import type { Camera } from '../render/camera';
 import { type Rgba, lerpColor, rgb, rgba } from '../render/color';
 import { Projection } from '../render/projection';
-import { drawPixelText } from '../render/pixelFont';
+import { drawOutlinedText, drawPixelText } from '../render/pixelFont';
 import { Projector } from '../render/projector';
 import type { Layers } from '../render/scene';
 import { fallPose, strideCycle, walkPose } from '../characters/poses';
@@ -170,6 +170,15 @@ const MILESTONE_BASE = 25;
 const randInt = (a: number, b: number): number => a + Math.floor(Math.random() * (b - a + 1));
 /** 掉落信用点时飘起来的金色 "+N" 停留多久。 */
 const POP_TIME = 1.4;
+/**
+ * 扣血数字：虫的血量和伤害都是 1、1.5、5 这种小数，显示时乘 HIT_SCALE（机枪一发 10、炮 20）。
+ * 一只虫 HIT_MERGE 秒内连着挨的几下合成一个数往上加，不然机枪扫一只虫会叠出一摞数字；
+ * 数字飘 HIT_TIME 秒，全场最多 HIT_MAX 个（虫潮里打得太密就先丢最老的）。
+ */
+const HIT_SCALE = 10;
+const HIT_MERGE = 0.25;
+const HIT_TIME = 0.7;
+const HIT_MAX = 160;
 /** 核心血条：两排小方块，一排 CORE_PIPS 个，一块 = CORE_HP / (2 × CORE_PIPS)。 */
 const CORE_PIPS = 10;
 /** 核心碎掉时的碎晶颜色。 */
@@ -213,7 +222,20 @@ function carryPose(pose: Pose): void {
   pose.solveLimbs();
 }
 
+/** 虫头上飘的扣血数字。 */
+interface HitNum {
+  x: number;
+  y: number;
+  z: number;
+  t: number;
+  /** 这一下（以及 HIT_MERGE 秒内同一只虫挨的几下）一共扣了多少（显示时 ×HIT_SCALE）。 */
+  n: number;
+  /** 打死了：数字换成亮黄色。 */
+  kill: boolean;
+}
+
 interface Bug {
+  hit?: HitNum;
   kind: BugKind;
   look: BugLook;
   x: number;
@@ -661,6 +683,8 @@ export class DefenseScene {
   milestone: { wave: number; amount: number } | null = null;
   /** 飘在战场上的金色 "+N"。 */
   private readonly pops: { x: number; y: number; z: number; t: number; text: string }[] = [];
+  /** 飘在虫头上的扣血数字。 */
+  private readonly hits: HitNum[] = [];
   coreHp = CORE_HP;
   readonly coreMax = CORE_HP;
   /** 核心挨打后的闪白（0..1）。 */
@@ -781,7 +805,9 @@ export class DefenseScene {
    */
   private hurt(b: Bug, dmg: number, fromX: number, fromY: number, blast: number): void {
     if (b.dead >= 0) return;
+    const dealt = Math.min(dmg, Math.max(0, b.hp));
     b.hp -= dmg;
+    this.hitNumber(b, dealt, b.hp <= 0 || blast >= 0.5);
     if (b.hp > 0 && blast < 0.5) return;
     if (!this.lost) {
       this.crystals += KILL_REWARD[b.kind];
@@ -944,6 +970,13 @@ export class DefenseScene {
     this.shake = Math.max(0, this.shake - dt * 2.5);
 
     this.coreHit = Math.max(0, this.coreHit - dt * 4);
+    for (let i = this.hits.length - 1; i >= 0; i--) {
+      const o = this.hits[i];
+      o.t += dt;
+      // 先蹦得快、后面慢下来。
+      o.z += (40 - 45 * Math.min(1, o.t / HIT_TIME)) * dt;
+      if (o.t >= HIT_TIME) this.hits.splice(i, 1);
+    }
     for (let i = this.pops.length - 1; i >= 0; i--) {
       const o = this.pops[i];
       o.t += dt;
@@ -2723,6 +2756,22 @@ export class DefenseScene {
     }
   }
 
+  /** 虫挨了一下：头上冒一个扣血数字（刚冒的还没飘远就往上加）。 */
+  private hitNumber(b: Bug, dealt: number, kill: boolean): void {
+    if (dealt <= 0) return;
+    const h = b.hit;
+    if (h && h.t < HIT_MERGE && this.hits.includes(h)) {
+      h.n += dealt;
+      h.kill ||= kill;
+      return;
+    }
+    const top = b.z + b.lift + 6 + BUG_SIZE[b.kind] * 5;
+    const o: HitNum = { x: b.x + (Math.random() - 0.5) * 6, y: b.y, z: top, t: 0, n: dealt, kill };
+    b.hit = o;
+    this.hits.push(o);
+    if (this.hits.length > HIT_MAX) this.hits.shift();
+  }
+
   /**
    * 地上添一摊血。虫成群死在防线前，同一处会一层层叠得发黑：附近（SPLAT_NEAR 以内）已经有 SPLAT_CROWD 摊的，
    * 先把那里最老的一摊去掉；全场最多 SPLAT_MAX 摊。
@@ -3140,11 +3189,19 @@ export class DefenseScene {
     // 玩家造的建筑、核心。
     this.drawStructures(ground, units, fx, cam);
     this.drawCore(ground, units, fx, cam);
-    // 掉落的信用点：金色的 "+N" 往上飘，最后一截淡出。
+    // 扣血数字，红白配色、带一圈细描边：普通的一下白字红边，打死的那一下红字白边；最后一截淡出。
+    // 字号和下面信用点的 "+N" 一样（同一个 px）。
     const px = Math.max(1, Math.round(0.8 * g));
+    for (const o of this.hits) {
+      const a = Math.round(255 * Math.min(1, (HIT_TIME - o.t) / 0.25));
+      const fill = o.kill ? rgba(236, 36, 44, a) : rgba(255, 255, 255, a);
+      const edge = o.kill ? rgba(255, 244, 244, a) : rgba(170, 14, 28, a);
+      drawOutlinedText(fx, String(Math.max(1, Math.round(o.n * HIT_SCALE))), cam.worldToScreenZ(o.x, o.y, o.z), px, fill, edge, 20.5);
+    }
+    // 掉落的信用点："+N" 往上飘，最后一截淡出。字色和右上角信用点的数字一样（#ffe2a8），描边取图标的橙色压暗。
     for (const o of this.pops) {
       const a = Math.round(255 * Math.min(1, (POP_TIME - o.t) / 0.4));
-      drawPixelText(fx, o.text, cam.worldToScreenZ(o.x, o.y, o.z), px, rgba(255, 206, 84, a), rgba(60, 34, 6, Math.round(a * 0.85)), 21);
+      drawPixelText(fx, o.text, cam.worldToScreenZ(o.x, o.y, o.z), px, rgba(255, 226, 168, a), rgba(110, 56, 14, Math.round(a * 0.9)), 21);
     }
 
     if (this.cruiserOn) {
