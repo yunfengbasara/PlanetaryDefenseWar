@@ -1,3 +1,13 @@
+# 凭据：绝不能进仓库（公开仓库的历史是永久的，推上去就只能改密码补救）
+doc/
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+*密码*
+*credentials*
+
 # 依赖与构建产物
 node_modules/
 dist/
