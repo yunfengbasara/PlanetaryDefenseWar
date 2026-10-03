@@ -3,6 +3,9 @@
 一个跑在浏览器里的像素塔防：开局只有一颗水晶核心和一笔晶矿，虫群一波比一波多，最后一波铺天盖地。
 TypeScript + Pixi.js + Vite，没有游戏引擎，也没有一张贴图。
 
+**在线试玩：<https://yunfengbasara.github.io/PlanetaryDefenseWar/>**（推到 `master` 由 GitHub Actions 自动打包发布，
+配置在 `.github/workflows/deploy.yml`；`vite.config.ts` 里 `base: './'` 让产物全用相对路径，放在子路径下也能跑。）
+
 ![01 轨道平台 α 的第 9 波：兵营、机甲车间、坦克、火炮守在防线后面，虫潮正压上来](screenshots/battle.png)
 
 三件事定义了这个项目：
