@@ -374,6 +374,10 @@ export const MENU_CSS = `
 .pdw-crystal svg { width: 16px; height: 16px; color: #5fd8e8; }
 .pdw-crystal b { min-width: 48px; font: 700 18px Consolas, monospace; color: #dff8ff; text-align: right; }
 .pdw-crystal em { font-style: normal; font-size: 12px; color: var(--muted); }
+.pdw-credit svg { color: var(--orange); }
+.pdw-credit b { color: #ffe2a8; }
+.pdw-credit.gain b { animation: pdw-gain .6s ease-out; }
+@keyframes pdw-gain { 0% { color: #fff; text-shadow: 0 0 10px rgba(255, 200, 90, .9); } 100% { color: #ffe2a8; text-shadow: none; } }
 
 /* ---------------------------------------------------------------- 波次面板（右上角，晶矿上面） */
 .pdw-wave {
@@ -405,6 +409,12 @@ export const MENU_CSS = `
 .pdw-banner.hidden { display: none; }
 .pdw-banner small { display: block; font: 700 12px Consolas, monospace; letter-spacing: 6px; color: #ff6a5a; }
 .pdw-banner b { display: block; font-size: 30px; letter-spacing: 8px; text-shadow: 2px 2px 0 #4a0e14, 0 0 18px rgba(255, 90, 80, .6); }
+.pdw-banner em {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding: 3px 12px;
+  font: 700 15px "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; font-style: normal; letter-spacing: 2px;
+  color: #ffe2a8; background: rgba(40, 26, 6, .7); border: 1px solid rgba(240, 150, 58, .7);
+}
+.pdw-banner em svg { width: 14px; height: 14px; color: var(--orange); }
 .pdw-banner.show { animation: pdw-banner 2.2s ease-out forwards; }
 @keyframes pdw-banner {
   0% { opacity: 0; transform: translate(-50%, -8px) scale(1.2); }

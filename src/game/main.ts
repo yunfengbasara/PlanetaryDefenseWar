@@ -59,6 +59,9 @@ export interface CssRect {
 
 export interface BattleState {
   crystals: number;
+  /** 这一局挣到的信用点（掉落 + 波次里程碑）；最近一次里程碑：突破第几波、发了多少。 */
+  credits: number;
+  milestone: { wave: number; amount: number } | null;
   coreHp: number;
   coreMax: number;
   lost: boolean;
@@ -311,6 +314,8 @@ export function bootDefense(app: Application): DefenseHandle {
       const b = battle;
       return {
         crystals: b.crystals,
+        credits: b.credits,
+        milestone: b.milestone,
         coreHp: b.coreHp,
         coreMax: b.coreMax,
         lost: b.lost,

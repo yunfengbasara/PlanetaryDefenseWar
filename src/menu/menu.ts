@@ -7,16 +7,17 @@ import { LINE_Y } from '../game/scene';
 import { Projection } from '../render/projection';
 import { Projector } from '../render/projector';
 import { Snapshotter } from '../render/snapshot';
-import { ACHIEVEMENTS, MAPS, type MapInfo, SHOP_ITEMS } from './data';
+import { save } from '../save';
+import { ACHIEVEMENTS, MAPS, type MapInfo, SHOP_ITEMS, isLocked, unlockText } from './data';
 import { shopIcon } from './shopIcons';
 import { MENU_CSS } from './style';
 
 /**
  * 主界面：一层盖在舞台上的 DOM。主界面期间战场不存在、也不更新，点"开始游戏"才开一局。
  *
- *   左   地图列表（目前只有一张能玩，其余锁着占位）
+ *   左   地图列表（新兵训练场的引导走完之前，其余地图锁着）
  *   右   选中地图的详情：地图画面、简介、敌情图鉴、开始游戏
- *   顶   资源、商城、成就
+ *   顶   信用点（存档里的）、商城、成就
  *
  * 界面按 1280×720 排版，再整体缩放到舞台大小 —— 舞台是 16:9，所以任何尺寸下排版都一样。
  *
@@ -44,7 +45,6 @@ const ICONS = {
   lock: '<svg viewBox="0 0 16 16"><path d="M4 7V5a4 4 0 0 1 8 0v2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="2" y="7" width="12" height="8" fill="currentColor"/></svg>',
   close: '<svg viewBox="0 0 16 16"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="2.5"/></svg>',
   credit: '<svg viewBox="0 0 16 16"><path d="M8 1l6 3.5v7L8 15l-6-3.5v-7z" fill="currentColor"/><path d="M8 5l3 1.75v3.5L8 12l-3-1.75v-3.5z" fill="#07090f" opacity=".45"/></svg>',
-  crystal: '<svg viewBox="0 0 16 16"><path d="M8 1l5 5-5 9-5-9z" fill="currentColor"/><path d="M8 1l2 5-2 9z" fill="#fff" opacity=".35"/></svg>',
   emblem:
     '<svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="9" fill="#2c4a8a"/><path d="M8 18c4-2 12-2 16 0" stroke="#7fa6ff" stroke-width="2" fill="none"/><ellipse cx="16" cy="16" rx="15" ry="5" transform="rotate(-20 16 16)" fill="none" stroke="#f0963a" stroke-width="2"/><rect x="21" y="6" width="4" height="4" fill="#f0963a"/></svg>',
 };
@@ -91,8 +91,7 @@ export class MainMenu {
       if (e.key === 'Escape' && this.modal) this.closeModal();
     });
 
-    this.renderList();
-    this.renderDetail();
+    this.refresh();
     this.drawMaps();
   }
 
@@ -103,6 +102,15 @@ export class MainMenu {
   show(): void {
     this.visible = true;
     this.root.classList.remove('hidden');
+    this.refresh();
+  }
+
+  /** 存档变了（信用点、引导进度）就重画一遍：顶上的信用点、地图的锁。 */
+  private refresh(): void {
+    this.root.querySelector('[data-credits]')!.textContent = save.credits.toLocaleString();
+    this.root.querySelector('[data-sectors]')!.textContent = `SECTORS · ${MAPS.filter((m) => !isLocked(m)).length}/${MAPS.length}`;
+    this.renderList();
+    this.renderDetail();
   }
 
   hide(): void {
@@ -136,8 +144,7 @@ export class MainMenu {
           </div>
         </div>
         <div class="pdw-res">
-          <span class="pdw-chip gold">${ICONS.credit}<b>12,480</b><em>信用点</em></span>
-          <span class="pdw-chip cyan">${ICONS.crystal}<b>360</b><em>晶矿</em></span>
+          <span class="pdw-chip gold">${ICONS.credit}<b data-credits>${save.credits.toLocaleString()}</b><em>信用点</em></span>
         </div>
         <nav class="pdw-nav">
           <button class="pdw-btn ghost" data-act="shop">${ICONS.shop}<span>商城</span></button>
@@ -146,7 +153,7 @@ export class MainMenu {
       </header>
       <main class="pdw-body">
         <section class="pdw-panel pdw-maps">
-          <div class="pdw-head"><h2>作战区域</h2><span>SECTORS · ${MAPS.filter((m) => !m.locked).length}/${MAPS.length}</span></div>
+          <div class="pdw-head"><h2>作战区域</h2><span data-sectors></span></div>
           <ul class="pdw-list"></ul>
           <div class="pdw-list-foot">更多战区将在后续版本开放</div>
         </section>
@@ -161,28 +168,20 @@ export class MainMenu {
     list.innerHTML = '';
     for (const m of MAPS) {
       const li = document.createElement('li');
-      li.className = `pdw-map${m.locked ? ' locked' : ''}${m === this.selected ? ' active' : ''}`;
+      const locked = isLocked(m);
+      li.className = `pdw-map${locked ? ' locked' : ''}${m === this.selected ? ' active' : ''}`;
       li.innerHTML = `
-        <div class="pdw-thumb">${m.locked ? `<span class="pdw-lock">${ICONS.lock}</span>` : ''}</div>
+        <div class="pdw-thumb">${locked ? `<span class="pdw-lock">${ICONS.lock}</span>` : ''}</div>
         <div class="pdw-map-text">
           <div class="pdw-map-row"><span class="pdw-idx">${m.index}</span><b>${m.name}</b></div>
           <small>${m.code}</small>
           <div class="pdw-map-row sub">
-            ${m.locked ? `<span class="pdw-status locked">${m.unlock}</span>` : '<span class="pdw-status ok">可部署</span>'}
+            ${locked ? `<span class="pdw-status locked">${unlockText(m)}</span>` : '<span class="pdw-status ok">可部署</span>'}
             <span class="pdw-pips sm">${pips(m.difficulty)}</span>
           </div>
         </div>`;
       const thumb = li.querySelector('.pdw-thumb')!;
-      if (!m.locked) {
-        let c = this.thumbs.get(m.id);
-        if (!c) {
-          c = document.createElement('canvas');
-          c.width = PREVIEW_W / 5;
-          c.height = PREVIEW_H / 5;
-          this.thumbs.set(m.id, c);
-        }
-        thumb.prepend(c);
-      }
+      if (!locked) thumb.prepend(this.thumb(m));
       li.addEventListener('click', () => {
         if (this.selected === m) return;
         this.selected = m;
@@ -196,12 +195,12 @@ export class MainMenu {
   private renderDetail(): void {
     const m = this.selected;
     const el = this.root.querySelector('.pdw-detail')!;
-    if (m.locked) {
+    if (isLocked(m)) {
       el.innerHTML = `
         <div class="pdw-head"><h2>${m.index} · ${m.name}</h2><span>${m.code}</span></div>
         <div class="pdw-preview offline">
           <div class="pdw-noise"></div>
-          <div class="pdw-offline">${ICONS.lock}<b>信号丢失</b><small>${m.unlock}</small></div>
+          <div class="pdw-offline">${ICONS.lock}<b>信号丢失</b><small>${unlockText(m)}</small></div>
           <span class="pdw-corner tl"></span><span class="pdw-corner tr"></span><span class="pdw-corner bl"></span><span class="pdw-corner br"></span>
         </div>
         <div class="pdw-locked-info">
@@ -316,15 +315,24 @@ export class MainMenu {
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(src, 0, 0);
       this.previews.set(m.id, big);
-      const thumb = this.thumbs.get(m.id);
-      if (thumb) {
-        const t = thumb.getContext('2d')!;
-        t.imageSmoothingEnabled = true;
-        t.drawImage(src, 0, 0, thumb.width, thumb.height);
-      }
+      const t = this.thumb(m).getContext('2d')!;
+      t.imageSmoothingEnabled = true;
+      t.drawImage(src, 0, 0, PREVIEW_W / 5, PREVIEW_H / 5);
     }
     useField(keep);
     this.renderDetail();
+  }
+
+  /** 列表里的缩略图（锁着的图也先画好，解锁时直接用）。 */
+  private thumb(m: MapInfo): HTMLCanvasElement {
+    let c = this.thumbs.get(m.id);
+    if (!c) {
+      c = document.createElement('canvas');
+      c.width = PREVIEW_W / 5;
+      c.height = PREVIEW_H / 5;
+      this.thumbs.set(m.id, c);
+    }
+    return c;
   }
 
   private enemyCanvas(kind: BugKind): HTMLCanvasElement {

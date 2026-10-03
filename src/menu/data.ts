@@ -1,8 +1,10 @@
 import type { BugKind } from '../game/bugs';
+import { save } from '../save';
 import type { GuideStep } from './hints';
 
 /**
- * 主界面上展示用的静态数据。00~05 都能玩，field 对应 game/fields.ts 里的战场；locked 的样式还留着，以后加锁着的图直接用。
+ * 主界面上展示用的静态数据。field 对应 game/fields.ts 里的战场。
+ * 00 新兵训练场一开始就能玩，其余的（afterTutorial）要先走完 00 的引导才开放。
  */
 
 export interface EnemyInfo {
@@ -26,6 +28,8 @@ export interface MapInfo {
   locked: boolean;
   /** 锁定时显示的解锁条件。 */
   unlock?: string;
+  /** 要先走完新兵训练场的引导才开放（看存档）。 */
+  afterTutorial?: boolean;
   /** 难度 1~5。 */
   difficulty: number;
   desc: string;
@@ -43,6 +47,13 @@ const ALL_ENEMIES: EnemyInfo[] = [
 ];
 
 const enemies = (...kinds: BugKind[]): EnemyInfo[] => kinds.map((k) => ALL_ENEMIES.find((e) => e.kind === k)!);
+
+/** 没走完引导的地图在列表里显示的解锁条件。 */
+export const TUTORIAL_UNLOCK = '通过新手引导解锁';
+
+/** 这张图现在锁着没有：写死锁着的，或者要等引导走完的。 */
+export const isLocked = (m: MapInfo): boolean => m.locked || (!!m.afterTutorial && !save.tutorialDone);
+export const unlockText = (m: MapInfo): string => (m.locked ? (m.unlock ?? '') : TUTORIAL_UNLOCK);
 
 export const MAPS: MapInfo[] = [
   {
@@ -76,6 +87,7 @@ export const MAPS: MapInfo[] = [
     name: '轨道平台 α',
     code: 'ORBITAL PLATFORM ALPHA',
     locked: false,
+    afterTutorial: true,
     difficulty: 3,
     desc: '一条悬在深空里的金属平台。虫群顺着前方的窄通道涌下来，守住防线，别让它们碰到后方的兵营和指挥中心。',
     stats: [
@@ -93,6 +105,7 @@ export const MAPS: MapInfo[] = [
     name: '赤沙峡谷',
     code: 'RED SAND CANYON',
     locked: false,
+    afterTutorial: true,
     difficulty: 4,
     desc: '一颗干旱行星上的峡谷要道。通道更宽，虫群里甲虫和喷酸虫明显更多；防线前垒了一排沙袋，后方是一片可以建造的水泥地坪。',
     stats: [
@@ -110,6 +123,7 @@ export const MAPS: MapInfo[] = [
     name: '静海月面',
     code: 'LUNAR SURFACE · MARE',
     locked: false,
+    afterTutorial: true,
     difficulty: 3,
     desc: '一片布满陨石坑的灰色月海。没有大气，飞虫上不来；可低重力让跳虫蹦得又高又远，防线前竖起了一排金属挡板。',
     stats: [
@@ -127,6 +141,7 @@ export const MAPS: MapInfo[] = [
     name: '冰封前哨',
     code: 'FROST OUTPOST',
     locked: false,
+    afterTutorial: true,
     difficulty: 4,
     desc: '暴风雪里的一座极地前哨。通道两侧是冰棱和雪堆，刺蛇在冻土下格外活跃；暴雪挡住了轨道支援，这一仗呼叫不了巨舰。',
     stats: [
@@ -144,6 +159,7 @@ export const MAPS: MapInfo[] = [
     name: '虫巢核心',
     code: 'HIVE CORE',
     locked: false,
+    afterTutorial: true,
     difficulty: 5,
     desc: '直插虫巢腹地的突击阵地。脚下是会喘气的菌毯，四周长满卵囊和骨刺；虫群刷得最快、重甲和喷酸虫最多，这是最后的考验。',
     stats: [
@@ -161,6 +177,7 @@ export const MAPS: MapInfo[] = [
     name: '远征号甲板',
     code: 'STARSHIP DECK · ODYSSEY',
     locked: false,
+    afterTutorial: true,
     difficulty: 4,
     desc: '在一艘全速航行的巨型星舰背上迎战。虫群从船头方向扑来，中轴的能量导管直通水晶核心；两侧船舷外就是呼啸而过的星空，飞虫格外多。',
     stats: [
@@ -178,6 +195,7 @@ export const MAPS: MapInfo[] = [
     name: '十字高地',
     code: 'CROSSROAD HIGHLAND',
     locked: false,
+    afterTutorial: true,
     difficulty: 4,
     desc: '水晶核心坐镇正中的高台，上下左右四条路直通高台的坡道，虫群从四个方向同时涌来。在高台上建好据点，把兵力分派到四个路口。',
     stats: [

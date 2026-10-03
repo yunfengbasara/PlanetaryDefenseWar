@@ -5,6 +5,7 @@ import type { MapInfo } from './menu/data';
 import { Hud } from './menu/hud';
 import { MainMenu } from './menu/menu';
 import { TutorialHints } from './menu/hints';
+import { save } from './save';
 
 createApp().then((app) => {
   const stage = stageElement();
@@ -12,6 +13,8 @@ createApp().then((app) => {
   const hints = new TutorialHints(stage);
   const tip = new UpgradeTip(stage, game);
   let current: MapInfo | null = null;
+  /** 这一局已经存进存档的信用点（局里挣到的减去它就是还没存的）。 */
+  let banked = 0;
 
   // 游戏内左上角的"主界面"按钮。
   const back = document.createElement('button');
@@ -21,14 +24,19 @@ createApp().then((app) => {
 
   const play = (map: MapInfo): void => {
     current = map;
+    banked = 0;
     menu.hide();
     tip.open(null);
     game.start(map.field);
     hud.show();
     build.show();
     back.classList.remove('hidden');
-    // 有引导就跟着引导走，走完 / 跳过才开始刷怪；别的地图直接开打。
-    if (map.hints) hints.play(map.hints, () => game.startWaves());
+    // 有引导就跟着引导走，走完 / 跳过才开始刷怪，同时记下"引导过了"（其他地图就此开放）；别的地图直接开打。
+    if (map.hints)
+      hints.play(map.hints, () => {
+        save.finishTutorial();
+        game.startWaves();
+      });
     else game.startWaves();
   };
   const quit = (): void => {
@@ -56,6 +64,11 @@ createApp().then((app) => {
   app.ticker.add((t) => {
     const dt = t.deltaMS / 1000;
     const st = game.state();
+    // 局里挣到的信用点随挣随存：中途退出、刷新页面也不丢。
+    if (st && st.credits > banked) {
+      save.addCredits(st.credits - banked);
+      banked = st.credits;
+    }
     menu.update(dt);
     hints.update(dt, st, (t) => {
       if (t === 'build:barracks') return build.itemRect('barracks', stage);

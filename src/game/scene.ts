@@ -115,6 +115,24 @@ const CORE_HP = 100;
 const CORE_DMG: Record<BugKind, number> = { crawler: 4, hopper: 5, beetle: 12, flyer: 6, serpent: 10, spitter: 8 };
 /** 每种虫被打死给多少晶矿。 */
 const KILL_REWARD: Record<BugKind, number> = { crawler: 1, hopper: 2, beetle: 5, flyer: 3, serpent: 6, spitter: 4 };
+/**
+ * 信用点（跨局保存）：打死虫子有一定概率掉一点（chance 概率，掉 min..max 点），越难打的虫越容易掉、掉得越多；
+ * 每突破 CREDIT_MILESTONE 波再发一笔，越往后越多，也带一点随机。
+ */
+const CREDIT_DROP: Record<BugKind, { chance: number; min: number; max: number }> = {
+  crawler: { chance: 0.02, min: 1, max: 2 },
+  hopper: { chance: 0.03, min: 1, max: 3 },
+  flyer: { chance: 0.04, min: 1, max: 3 },
+  spitter: { chance: 0.05, min: 2, max: 4 },
+  beetle: { chance: 0.08, min: 2, max: 5 },
+  serpent: { chance: 0.1, min: 3, max: 6 },
+};
+const CREDIT_MILESTONE = 5;
+/** 第 k 个里程碑（突破第 5k 波）发多少：基数 × k，再随机多给 0~50%。 */
+const MILESTONE_BASE = 25;
+const randInt = (a: number, b: number): number => a + Math.floor(Math.random() * (b - a + 1));
+/** 掉落信用点时飘起来的金色 "+N" 停留多久。 */
+const POP_TIME = 1.4;
 /** 核心血条：两排小方块，一排 CORE_PIPS 个，一块 = CORE_HP / (2 × CORE_PIPS)。 */
 const CORE_PIPS = 10;
 /** 核心碎掉时的碎晶颜色。 */
@@ -600,6 +618,12 @@ export class DefenseScene {
   shake = 0;
   /** 局内晶矿：打死虫子就涨，之后拿来升级、建造。 */
   crystals = 0;
+  /** 这一局挣到的信用点（外面每帧把新增的存进存档）。 */
+  credits = 0;
+  /** 最近一次波次里程碑：突破第几波、发了多少（HUD 跟着"第 N 波来袭"一起显示）。 */
+  milestone: { wave: number; amount: number } | null = null;
+  /** 飘在战场上的金色 "+N"。 */
+  private readonly pops: { x: number; y: number; z: number; t: number; text: string }[] = [];
   coreHp = CORE_HP;
   readonly coreMax = CORE_HP;
   /** 核心挨打后的闪白（0..1）。 */
@@ -714,7 +738,15 @@ export class DefenseScene {
     if (b.dead >= 0) return;
     b.hp -= dmg;
     if (b.hp > 0 && blast < 0.5) return;
-    if (!this.lost) this.crystals += KILL_REWARD[b.kind];
+    if (!this.lost) {
+      this.crystals += KILL_REWARD[b.kind];
+      const drop = CREDIT_DROP[b.kind];
+      if (Math.random() < drop.chance) {
+        const n = randInt(drop.min, drop.max);
+        this.credits += n;
+        this.pops.push({ x: b.x, y: b.y, z: b.z + b.lift + 14, t: 0, text: `+${n}` });
+      }
+    }
     const dx = b.x - fromX;
     const dy = b.y - fromY;
     const d = Math.hypot(dx, dy) || 1;
@@ -868,6 +900,12 @@ export class DefenseScene {
     this.shake = Math.max(0, this.shake - dt * 2.5);
 
     this.coreHit = Math.max(0, this.coreHit - dt * 4);
+    for (let i = this.pops.length - 1; i >= 0; i--) {
+      const o = this.pops[i];
+      o.t += dt;
+      o.z += 16 * dt;
+      if (o.t >= POP_TIME) this.pops.splice(i, 1);
+    }
     if (this.lost) this.lostT += dt;
     // 波次：倒计时到了就来下一波；排着的虫按 WAVE_PACE 只 / 秒陆续刷出来（场上满了就等一等）。
     if (this.waves && !this.lost) {
@@ -1758,6 +1796,13 @@ export class DefenseScene {
 
   /** 来下一波：波数 +1，这一波的虫排进队列（和场上还没打完的叠在一起），倒计时重新开始。 */
   private launchWave(): void {
+    // 上一波撑过去了：每突破 CREDIT_MILESTONE 波发一笔信用点。
+    if (this.wave > 0 && this.wave % CREDIT_MILESTONE === 0) {
+      const k = this.wave / CREDIT_MILESTONE;
+      const amount = Math.round(MILESTONE_BASE * k * (1 + Math.random() * 0.5));
+      this.credits += amount;
+      this.milestone = { wave: this.wave, amount };
+    }
     this.wave++;
     this.pending += waveSize(this.wave, this.field.waveScale);
     this.nextIn = WAVE_GAP;
@@ -1847,6 +1892,8 @@ export class DefenseScene {
       this.guns.push(s.gun);
     }
     this.structures.push(s);
+    // 默认集结点也得在集结范围里（建在离防线很远的地方时，就落在范围圈靠防线那一边）。
+    if (kind === 'barracks' || kind === 'factory') s.rally = this.clampRally(s, s.rally.x, s.rally.y);
     this.fx.poof(x, y + d.h / 2, 0, 1.2);
     this.shake = Math.min(1, this.shake + 0.15);
     this.makeRoom();
@@ -2237,10 +2284,8 @@ export class DefenseScene {
   }
 
   /** 改集结点（右键）：夹在平台里；名下的士兵按新方阵重新走过去，机甲重新排。 */
-  setRally(id: number, x: number, y: number): boolean {
-    const s = this.structures.find((o) => o.id === id);
-    if (!s || (s.kind !== 'barracks' && s.kind !== 'factory')) return false;
-    // 离建筑最远 RALLY_MAX：点得更远就放在范围圈的边上。
+  /** 集结点离建筑最远 RALLY_MAX：更远就放在范围圈的边上，再挪到能走到的地方。 */
+  private clampRally(s: Structure, x: number, y: number): Vec2 {
     const dx = x - s.x;
     const dy = y - s.y;
     const dist = Math.hypot(dx, dy);
@@ -2248,7 +2293,13 @@ export class DefenseScene {
       x = s.x + (dx / dist) * RALLY_MAX;
       y = s.y + (dy / dist) * RALLY_MAX;
     }
-    s.rally = this.walkClamp(x, y, 14);
+    return this.walkClamp(x, y, 14);
+  }
+
+  setRally(id: number, x: number, y: number): boolean {
+    const s = this.structures.find((o) => o.id === id);
+    if (!s || (s.kind !== 'barracks' && s.kind !== 'factory')) return false;
+    s.rally = this.clampRally(s, x, y);
     this.fx.poof(s.rally.x, s.rally.y, 0, 0.5);
     if (s.kind === 'factory') {
       this.regroup(s);
@@ -2986,6 +3037,12 @@ export class DefenseScene {
     // 玩家造的建筑、核心。
     this.drawStructures(ground, units, fx, cam);
     this.drawCore(ground, units, fx, cam);
+    // 掉落的信用点：金色的 "+N" 往上飘，最后一截淡出。
+    const px = Math.max(1, Math.round(0.8 * g));
+    for (const o of this.pops) {
+      const a = Math.round(255 * Math.min(1, (POP_TIME - o.t) / 0.4));
+      drawPixelText(fx, o.text, cam.worldToScreenZ(o.x, o.y, o.z), px, rgba(255, 206, 84, a), rgba(60, 34, 6, Math.round(a * 0.85)), 21);
+    }
 
     if (this.cruiserOn) {
       if (this.selected === CRUISER_ID) this.drawCruiserSelection(ground, cam);

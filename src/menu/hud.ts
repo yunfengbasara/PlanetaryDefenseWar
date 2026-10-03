@@ -4,9 +4,9 @@ import type { BattleState } from '../game/main';
  * 局内 HUD：
  *
  *   右上角   波次面板（当前第几波、场上还剩多少虫；下一波第几波、多少只、倒计时；"下一波"按钮，
- *            提前叫按剩余秒数给晶矿）→ 晶矿数 → （外面挂上来的）建造列表
- *   上方正中 每来一波闪一行"第 N 波来袭"
- *   结算     核心碎了之后弹（重新开始 / 返回主界面）
+ *            提前叫按剩余秒数给晶矿）→ 晶矿数 → 本局挣到的信用点 → （外面挂上来的）建造列表
+ *   上方正中 每来一波闪一行"第 N 波来袭"；刚突破里程碑的话下面再加一行"突破第 N 波 · 信用点 +M"
+ *   结算     核心碎了之后弹（坚守时间、坚持到第几波、本局信用点；重新开始 / 返回主界面）
  *
  * 核心血条画在战场里核心的正下方，不在这儿。只管显示，每帧从 state() 读数；样式在 style.ts 的
  * .pdw-hud、.pdw-wave、.pdw-banner、.pdw-over。
@@ -17,6 +17,8 @@ const OVER_DELAY = 1.6;
 /** "第 N 波来袭"停留多久。 */
 const BANNER_TIME = 2.2;
 
+const CREDIT_ICON =
+  '<svg viewBox="0 0 16 16"><path d="M8 1l6 3.5v7L8 15l-6-3.5v-7z" fill="currentColor"/><path d="M8 5l3 1.75v3.5L8 12l-3-1.75v-3.5z" fill="#07090f" opacity=".45"/></svg>';
 const CRYSTAL_ICON =
   '<svg viewBox="0 0 16 16"><path d="M8 1l5 5-5 9-5-9z" fill="currentColor"/><path d="M8 1l2 5-2 9z" fill="#fff" opacity=".35"/></svg>';
 
@@ -42,6 +44,8 @@ export class Hud {
   private readonly over = document.createElement('div');
   private readonly banner = document.createElement('div');
   private readonly crystalText: HTMLElement;
+  private readonly creditText: HTMLElement;
+  private shownCredits = -1;
   private readonly waveEl: HTMLElement;
   private shownCrystals = -1;
   private shownWave = 0;
@@ -60,8 +64,10 @@ export class Hud {
         <div class="pdw-wave-bar"><i data-f="bar"></i></div>
         <button class="pdw-btn pdw-wave-call" data-act="next"><span>下一波</span><em>${CRYSTAL_ICON}<i data-f="bonus"></i></em></button>
       </div>
-      <div class="pdw-crystal">${CRYSTAL_ICON}<b></b><em>晶矿</em></div>`;
+      <div class="pdw-crystal">${CRYSTAL_ICON}<b></b><em>晶矿</em></div>
+      <div class="pdw-crystal pdw-credit">${CREDIT_ICON}<b></b><em>信用点</em></div>`;
     this.crystalText = this.bar.querySelector('.pdw-crystal b')!;
+    this.creditText = this.bar.querySelector('.pdw-credit b')!;
     this.waveEl = this.bar.querySelector('.pdw-wave')!;
     this.bar.querySelector('[data-act=next]')!.addEventListener('click', () => actions.nextWave());
     this.bar.querySelector('.pdw-wave')!.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -76,7 +82,7 @@ export class Hud {
         <div class="pdw-over-stats">
           <div><span>坚守时间</span><b data-k="time"></b></div>
           <div><span>坚持到</span><b data-k="wave"></b></div>
-          <div><span>获得晶矿</span><b data-k="crystals"></b></div>
+          <div><span>获得信用点</span><b data-k="credits"></b></div>
         </div>
         <div class="pdw-over-actions">
           <button class="pdw-btn ghost" data-act="quit"><span>返回主界面</span></button>
@@ -102,6 +108,7 @@ export class Hud {
     this.banner.classList.add('hidden');
     this.overShown = false;
     this.shownCrystals = -1;
+    this.shownCredits = -1;
     this.shownWave = 0;
     this.bannerT = 0;
   }
@@ -120,11 +127,23 @@ export class Hud {
       this.shownCrystals = st.crystals;
       this.crystalText.textContent = st.crystals.toLocaleString();
     }
+    if (st.credits !== this.shownCredits) {
+      // 涨了就闪一下。
+      if (this.shownCredits >= 0) {
+        this.creditText.parentElement!.classList.remove('gain');
+        void this.creditText.offsetWidth;
+        this.creditText.parentElement!.classList.add('gain');
+      }
+      this.shownCredits = st.credits;
+      this.creditText.textContent = `+${st.credits.toLocaleString()}`;
+    }
     this.updateWave(st);
     // 新的一波来了：上方正中闪一行。
     if (st.wave.current > this.shownWave) {
       this.shownWave = st.wave.current;
-      this.banner.innerHTML = `<small>WAVE ${st.wave.current}</small><b>第 ${st.wave.current} 波来袭</b>`;
+      const m = st.milestone;
+      const bonus = m && m.wave === st.wave.current - 1 ? `<em>${CREDIT_ICON}突破第 ${m.wave} 波 · 信用点 +${m.amount}</em>` : '';
+      this.banner.innerHTML = `<small>WAVE ${st.wave.current}</small><b>第 ${st.wave.current} 波来袭</b>${bonus}`;
       this.banner.classList.remove('hidden');
       // 重播动画：去掉再加回 class。
       this.banner.classList.remove('show');
@@ -141,7 +160,7 @@ export class Hud {
       const t = Math.floor(st.time);
       this.over.querySelector('[data-k=time]')!.textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
       this.over.querySelector('[data-k=wave]')!.textContent = `第 ${st.wave.current} 波`;
-      this.over.querySelector('[data-k=crystals]')!.textContent = st.crystals.toLocaleString();
+      this.over.querySelector('[data-k=credits]')!.textContent = `+${st.credits.toLocaleString()}`;
       this.over.classList.remove('hidden');
     }
   }
