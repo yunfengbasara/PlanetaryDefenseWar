@@ -4,7 +4,8 @@ import type { BugKind } from './bugs';
  * 战场定义：一张地图在玩法和画面上的全部差异。
  *
  * 地形的宽窄（spanAt）、地板画法、虫群构成、能不能买巨舰、初始晶矿都从这里读。所有地图都是同一套玩法：
- * 开局清空，只有核心和一笔晶矿，玩家自己造；虫一波一波地来，每波比上一波多（规模乘 waveScale）。当前战场是模块级的
+ * 开局清空，只有核心和一笔晶矿，玩家自己造；虫一波一波地来，打完 waves 波就通关。各图的差别在
+ * 波数、规模（waveScale）、虫群速度（pace、rush）和虫的构成（mix）。当前战场是模块级的
  * 一个值 —— spanAt 被场景、地面、地板到处调用，传参数会穿透半个游戏；一局只打一张图，
  * 开局前 useField() 切过去就行。主界面画预览时临时切过去、画完切回来。
  */
@@ -17,9 +18,14 @@ export interface FieldDef {
   /** 前方通道、后方炮位区的半宽。后方要放坦克、高射炮、兵营，别比 235 窄。 */
   narrow: number;
   wide: number;
-  /** 波次规模系数（1 = 标准：第 n 波 6 + 5(n-1) 只，乘上这个系数）；场上最多多少只活的（多出来的排队晚点出）。 */
+  /** 通关要打几波：最后一波打完、场上清空就赢。 */
+  waves: number;
+  /** 波次规模系数（1 = 标准，见 scene.ts 的 waveSize）；场上最多多少只活的（多出来的排队晚点出）。 */
   waveScale: number;
   maxAlive: number;
+  /** 虫群速度：pace 一波的虫刷出来有多快，rush 虫跑得多快（都是倍率，1 = 标准）。 */
+  pace: number;
+  rush: number;
   /** 各种虫的出现比例（加起来为 1）。 */
   mix: [BugKind, number][];
   /** 这张图能不能买巨舰（战列巡航舰）。 */
@@ -42,8 +48,11 @@ export const FIELDS: Record<string, FieldDef> = {
     theme: 'space',
     narrow: 80,
     wide: 235,
+    waves: 8,
     waveScale: 0.5,
-    maxAlive: 60,
+    maxAlive: 120,
+    pace: 0.7,
+    rush: 0.9,
     mix: [
       ['crawler', 0.82],
       ['hopper', 0.18],
@@ -57,8 +66,11 @@ export const FIELDS: Record<string, FieldDef> = {
     theme: 'space',
     narrow: 175,
     wide: 235,
+    waves: 15,
     waveScale: 1,
-    maxAlive: 150,
+    maxAlive: 300,
+    pace: 1,
+    rush: 1,
     mix: [
       ['crawler', 0.56],
       ['hopper', 0.13],
@@ -76,8 +88,11 @@ export const FIELDS: Record<string, FieldDef> = {
     theme: 'desert',
     narrow: 200,
     wide: 240,
-    waveScale: 1.15,
-    maxAlive: 160,
+    waves: 18,
+    waveScale: 1.1,
+    maxAlive: 320,
+    pace: 1,
+    rush: 0.95,
     mix: [
       ['crawler', 0.46],
       ['hopper', 0.1],
@@ -95,8 +110,11 @@ export const FIELDS: Record<string, FieldDef> = {
     theme: 'moon',
     narrow: 180,
     wide: 235,
+    waves: 18,
     waveScale: 1,
-    maxAlive: 150,
+    maxAlive: 300,
+    pace: 1.15,
+    rush: 1.1,
     mix: [
       ['crawler', 0.5],
       ['hopper', 0.24],
@@ -113,8 +131,11 @@ export const FIELDS: Record<string, FieldDef> = {
     theme: 'ice',
     narrow: 165,
     wide: 235,
-    waveScale: 1.15,
-    maxAlive: 170,
+    waves: 20,
+    waveScale: 1.1,
+    maxAlive: 330,
+    pace: 1.1,
+    rush: 1,
     mix: [
       ['crawler', 0.48],
       ['hopper', 0.12],
@@ -132,8 +153,11 @@ export const FIELDS: Record<string, FieldDef> = {
     theme: 'starship',
     narrow: 170,
     wide: 235,
+    waves: 22,
     waveScale: 1.15,
-    maxAlive: 170,
+    maxAlive: 330,
+    pace: 1.2,
+    rush: 1.15,
     mix: [
       ['crawler', 0.5],
       ['hopper', 0.12],
@@ -153,8 +177,11 @@ export const FIELDS: Record<string, FieldDef> = {
     layout: 'cross',
     narrow: 150,
     wide: 150,
+    waves: 25,
     waveScale: 0.85,
-    maxAlive: 160,
+    maxAlive: 320,
+    pace: 1.1,
+    rush: 1.05,
     mix: [
       ['crawler', 0.55],
       ['hopper', 0.18],
@@ -170,8 +197,11 @@ export const FIELDS: Record<string, FieldDef> = {
     theme: 'hive',
     narrow: 195,
     wide: 240,
-    waveScale: 1.5,
-    maxAlive: 220,
+    waves: 30,
+    waveScale: 1.4,
+    maxAlive: 400,
+    pace: 1.4,
+    rush: 1.25,
     mix: [
       ['crawler', 0.4],
       ['hopper', 0.12],

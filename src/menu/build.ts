@@ -35,7 +35,7 @@ const itemCost = (item: Item): number => (item === 'airstrike' ? AIRSTRIKE_COST 
 
 const THUMB_W = 56;
 /** 右上角那一列（波次面板、晶矿、建造列表）占多宽（CSS 像素）：升级面板别压上去。 */
-const RIGHT_COLUMN = 230;
+const RIGHT_COLUMN = 236;
 const THUMB_H = 44;
 
 export class BuildPanel {
@@ -162,15 +162,30 @@ export class UpgradeTip {
     this.el.addEventListener('click', (e) => {
       const btn = (e.target as HTMLElement).closest('[data-act]') as HTMLElement | null;
       if (!btn) return;
-      if (btn.dataset.act === 'close') this.game.deselect();
+      // 关闭只收起面板：建筑还选着（射程圈还在、照样能右键设集结点），再左键点一下别处才取消选中。
+      if (btn.dataset.act === 'close') this.open(null);
       if (btn.dataset.act === 'up' && this.id !== null) this.game.upgrade(this.id, btn.dataset.k as StatKey);
       if (btn.dataset.act === 'sell' && this.id !== null) {
         if (performance.now() - this.sellArmed < 2000) this.game.sell(this.id);
         else this.sellArmed = performance.now();
       }
     });
-    // 面板上的点击别漏到画布上（不然会被当成"点了空地"取消选中）。
-    this.el.addEventListener('pointerdown', (e) => e.stopPropagation());
+    // 面板上的左键点击别漏到画布上（不然会被当成"点了空地"取消选中，点到满级的那一行面板就没了）。
+    // 右键和滚轮转给画布：隔着面板照样能右键设集结点 / 挪巨舰、滚轮缩放。
+    const canvas = (): HTMLCanvasElement | null => host.querySelector('canvas');
+    this.el.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      if (e.button === 2) canvas()?.dispatchEvent(new PointerEvent('pointerdown', e));
+    });
+    this.el.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.el.addEventListener(
+      'wheel',
+      (e) => {
+        e.preventDefault();
+        canvas()?.dispatchEvent(new WheelEvent('wheel', e));
+      },
+      { passive: false },
+    );
     host.appendChild(this.el);
   }
 

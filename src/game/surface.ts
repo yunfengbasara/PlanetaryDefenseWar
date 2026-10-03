@@ -12,7 +12,6 @@ import { type Theme, field } from './fields';
  *   通道外    大块的起伏（沙丘 / 雪堆 / 陨石坑 / 菌毯肉丘）、小纹理、零星的大件（石柱 / 冰棱 / 巨石 / 卵囊）
  *   通道边    一溜岩块（冰块 / 碎石 / 甲壳骨刺），像崖脚
  *   通道里    压实的路面：斑块、碎石、裂纹、车辙
- *   防线      一排掩体（沙袋 / 压雪的沙袋 / 金属挡板）
  *   后方      地坪，坦克、高射炮、兵营都落在上面
  *   最上面    风沙 / 落雪 / 孢子
  *
@@ -22,7 +21,6 @@ import { type Theme, field } from './fields';
 type Blob = 'dune' | 'drift' | 'crater' | 'mound';
 type Ripple = 'sand' | 'wind' | 'pit' | 'vein';
 type Outcrop = 'mesa' | 'spire' | 'boulder' | 'sac';
-type Barrier = 'bag' | 'snowbag' | 'plate';
 type Weather = 'dust' | 'snow' | 'spore' | 'none';
 
 interface SurfaceStyle {
@@ -43,12 +41,9 @@ interface SurfaceStyle {
   pad: Rgba[];
   seam: Rgba;
   paint: Rgba;
-  bag: Rgba;
-  bagDark: Rgba;
   blob: Blob;
   ripple: Ripple;
   outcrop: Outcrop;
-  barrier: Barrier;
   weather: Weather;
   tracks: boolean;
 }
@@ -70,12 +65,9 @@ const STYLES: Record<Exclude<Theme, 'space' | 'starship' | 'highland'>, SurfaceS
     pad: [rgb(170, 162, 146), rgb(160, 153, 138), rgb(178, 170, 154)],
     seam: rgb(118, 108, 94),
     paint: rgb(226, 170, 52),
-    bag: rgb(178, 152, 104),
-    bagDark: rgb(132, 108, 72),
     blob: 'dune',
     ripple: 'sand',
     outcrop: 'mesa',
-    barrier: 'bag',
     weather: 'dust',
     tracks: true,
   },
@@ -95,12 +87,9 @@ const STYLES: Record<Exclude<Theme, 'space' | 'starship' | 'highland'>, SurfaceS
     pad: [rgb(124, 136, 152), rgb(116, 128, 144), rgb(132, 144, 160)],
     seam: rgb(78, 88, 104),
     paint: rgb(240, 120, 60),
-    bag: rgb(150, 140, 112),
-    bagDark: rgb(108, 100, 80),
     blob: 'drift',
     ripple: 'wind',
     outcrop: 'spire',
-    barrier: 'snowbag',
     weather: 'snow',
     tracks: true,
   },
@@ -120,12 +109,9 @@ const STYLES: Record<Exclude<Theme, 'space' | 'starship' | 'highland'>, SurfaceS
     pad: [rgb(196, 198, 204), rgb(186, 188, 196), rgb(204, 206, 212)],
     seam: rgb(110, 112, 122),
     paint: rgb(80, 150, 230),
-    bag: rgb(170, 172, 180),
-    bagDark: rgb(110, 112, 122),
     blob: 'crater',
     ripple: 'pit',
     outcrop: 'boulder',
-    barrier: 'plate',
     weather: 'none',
     tracks: true,
   },
@@ -146,12 +132,9 @@ const STYLES: Record<Exclude<Theme, 'space' | 'starship' | 'highland'>, SurfaceS
     pad: [rgb(92, 96, 108), rgb(84, 88, 100), rgb(100, 104, 116)],
     seam: rgb(46, 48, 58),
     paint: rgb(240, 150, 50),
-    bag: rgb(120, 124, 136),
-    bagDark: rgb(66, 70, 80),
     blob: 'mound',
     ripple: 'vein',
     outcrop: 'sac',
-    barrier: 'plate',
     weather: 'spore',
     tracks: false,
   },
@@ -300,7 +283,6 @@ export function drawSurface(s: ShapeBatch, cam: Camera, time: number): void {
     plate(s, cam, LANE_CX - 1.5, PAD_Y + 10, LANE_CX + 1.5, Math.min(END_Y - 30, PAD_Y + 140), st.paint, 5.4);
   }
 
-  barrier(s, cam, st);
 
   // 崖脚：通道两边一溜岩块，大小错落。
   for (let y = Math.floor(Math.max(TOP_Y, top - 20) / 12) * 12; y < Math.min(END_Y, bottom + 20); y += 12) {
@@ -393,38 +375,6 @@ function blob(s: ShapeBatch, st: SurfaceStyle, at: { x: number; y: number }, rx:
       s.ellipse(v2(at.x + rx * 0.06, at.y + ry * 0.16), rx * 0.8, ry * 0.72, 0, lerpColor(st.dark, st.base, 0.55), d + 0.002);
       s.ellipse(v2(at.x + rx * 0.2, at.y + ry * 0.3), rx * 0.42, ry * 0.3, 0, lerpColor(st.base, st.light, 0.3), d + 0.003);
       break;
-    }
-  }
-}
-
-// ------------------------------------------------------------------ 防线掩体
-
-function barrier(s: ShapeBatch, cam: Camera, st: SurfaceStyle): void {
-  const g = cam.grain;
-  const [a, b] = spanAt(448);
-  if (st.barrier === 'plate') {
-    // 金属挡板：一块块立着的板，顶面亮一档，正面暗，之间留缝。
-    for (let x = a + 14; x + 14 < b - 12; x += 16) {
-      const p0 = cam.worldToScreenZ(x, 448, 0);
-      const p1 = cam.worldToScreenZ(x + 14, 448, 0);
-      const q0 = cam.worldToScreenZ(x, 448, 5);
-      const q1 = cam.worldToScreenZ(x + 14, 448, 5);
-      s.quad(p0, p1, q1, q0, st.bagDark, 30);
-      const r0 = cam.worldToScreenZ(x, 445, 5);
-      const r1 = cam.worldToScreenZ(x + 14, 445, 5);
-      s.quad(r0, r1, q1, q0, st.bag, 30.01);
-      s.bar(v2(q0.x + g, q0.y + g * 1.5), v2(q1.x - g, q1.y + g * 1.5), Math.max(1, g * 0.6), st.paint, 30.02);
-    }
-    return;
-  }
-  // 沙袋：两层错开。冰原的沙袋顶上压一层雪。
-  for (let layer = 0; layer < 2; layer++) {
-    for (let x = a + 14 + layer * 4.5; x < b - 14; x += 9) {
-      const at = cam.worldToScreenZ(x, 448, layer * 2.6);
-      s.ellipse(v2(at.x, at.y + g * 1.2), 4.8 * g, 2.4 * g, 0, st.bagDark, 30 + layer);
-      s.ellipse(at, 4.6 * g, 2.2 * g, 0, st.bag, 30.01 + layer);
-      const cap = st.barrier === 'snowbag' && layer === 1 ? rgb(244, 248, 255) : lerpColor(st.bag, rgb(255, 240, 200), 0.3);
-      s.ellipse(v2(at.x - g * 0.5, at.y - g * 0.9), (st.barrier === 'snowbag' && layer === 1 ? 3.8 : 2.4) * g, 1.1 * g, 0, cap, 30.02 + layer);
     }
   }
 }

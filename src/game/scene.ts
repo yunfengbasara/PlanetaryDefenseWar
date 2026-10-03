@@ -78,14 +78,51 @@ export const RALLY_MAX = 220;
 /** 走路的单位离终点这么近、又被挡住了，就当作到了（不去挤开占着位置的东西）。 */
 const ARRIVE_NEAR = 30;
 /**
- * 波次（占位数值）：开局准备多久、两波之间隔多久、第 n 波多少只（乘地图的 waveScale）、一波的虫多快刷出来、
- * 提前叫下一波时每剩一秒奖励多少晶矿。
+ * 波次。分两段：
+ *
+ *   建防期   前 BUILD_WAVES 波：20 只起步，每波多 10 只，间隔短 —— 拿晶矿把基本防线搭起来
+ *   总攻期   之后每一波都是大军（150 只起步，每波再多 35 只）；最后一波再多一半
+ *
+ * 每过一波虫跑快 3%（最多快 50%）。
+ *
+ * 一波来了先冲出一大群（WAVE_BURST 那么多，立刻刷出来，从地图顶边往下铺成一片），剩下的在这一波的时间里
+ * 从顶边源源不断地往外涌（STREAM_SPAN × 波间隔内匀速刷完）—— 虫潮不断档。提前叫下一波，两波的虫潮就叠在一起涌。
+ * 场上活着的最多 maxAlive 只，满了就等一等，空出位置再补。
+ * 只数都乘地图的 waveScale，涌出的速度乘 pace（刷得更快）、虫的移动速度乘 rush（fields.ts）。打完地图的 waves 波就通关。
+ * EARLY_BONUS：提前叫下一波时每剩一秒奖励多少晶矿。callLockOf：一波来了之后至少过这么久才能再提前叫
+ * —— 不然手快的人一口气就把所有波叫完了。
  */
-const WAVE_PREP = 20;
-const WAVE_GAP = 30;
-const waveSize = (n: number, scale: number): number => Math.max(1, Math.round((6 + 5 * (n - 1)) * scale));
-const WAVE_PACE = 3;
+export const BUILD_WAVES = 5;
+const WAVE_PREP = 15;
+/** 第 n 波来了以后，离下一波多少秒。 */
+const waveGap = (n: number): number => (n < BUILD_WAVES ? 15 : 20);
+const waveSize = (n: number, scale: number, total: number): number => {
+  const base = n <= BUILD_WAVES ? 20 + 10 * (n - 1) : 150 + 35 * (n - BUILD_WAVES - 1);
+  return Math.max(1, Math.round(base * scale * (n === total ? 1.5 : 1)));
+};
+/** 一波里先冲出来的那一群占多少；剩下的在波间隔的多少比例里涌完。 */
+const WAVE_BURST = 0.3;
+const STREAM_SPAN = 1;
+/**
+ * 整群刷出来时，从地图顶边往下铺多长：至少 WAVE_STRING_MIN（虫少的波也有一部分直接落在默认镜头里，
+ * 一按就看得见），每只虫再加 WAVE_STRING，最长 WAVE_STRING_MAX（别铺到防线跟前）。
+ */
+const WAVE_STRING_MIN = 280;
+const WAVE_STRING = 2;
+const WAVE_STRING_MAX = 320;
+/** 提前叫下一波的冷却（秒）：建防期短一点，总攻期长一点。 */
+const callLockOf = (n: number): number => (n <= BUILD_WAVES ? 3 : 8);
+/** 每过一波虫跑快 3%，最多快 50%。 */
+const waveRush = (n: number): number => 1 + Math.min(0.5, (n - 1) * 0.03);
+/** 各种虫从第几波开始出现（之后两波里比例慢慢涨到 mix 里写的）。 */
+const KIND_FROM: Record<BugKind, number> = { crawler: 1, hopper: 2, flyer: 3, spitter: 4, beetle: 4, serpent: 5 };
 const EARLY_BONUS = 3;
+/** 地上的血迹：留多久（秒）、最后几秒淡出、全场最多几摊、多近算"同一处"、同一处最多叠几摊。 */
+const SPLAT_LIFE = 9;
+const SPLAT_FADE = 3;
+const SPLAT_MAX = 220;
+const SPLAT_NEAR = 12;
+const SPLAT_CROWD = 3;
 /** 血条分几格。 */
 const HP_PIPS = 5;
 const BITE: Partial<Record<BugKind, number>> = { crawler: 1, hopper: 2, beetle: 3 };
@@ -631,7 +668,11 @@ export class DefenseScene {
   /** 核心被打碎：不再刷虫，lostT 记碎了多久（外面据此弹结算）。 */
   lost = false;
   lostT = 0;
-  private spawnAcc = 0;
+  /** 打完最后一波、虫全清光：通关；wonT 记通关了多久（外面据此弹结算）。 */
+  won = false;
+  wonT = 0;
+  /** 上一波来了多久（提前叫下一波的冷却用）。 */
+  private sinceLaunch = 0;
 
   /** 十字高地：虫从四个方向来，没有"防线"那一行；几何在 crossmap.ts。 */
   readonly cross: boolean = this.field.layout === 'cross';
@@ -640,7 +681,8 @@ export class DefenseScene {
   /** 当前是第几波（0 = 第一波还没来）；离下一波还有几秒；还排着没刷出来的虫。 */
   wave = 0;
   nextIn = WAVE_PREP;
-  private pending = 0;
+  /** 每一波还没涌出来的虫：剩几只、每秒涌几只、攒着的零头。 */
+  private readonly streams: { left: number; rate: number; acc: number }[] = [];
   readonly structures: Structure[] = [];
   ghost: Ghost | null = null;
   /** 当前选中（弹着升级面板）的建筑。 */
@@ -665,9 +707,12 @@ export class DefenseScene {
 
   /** 新虫默认从地图顶边外面一点刷出来，走进画面。 */
   private spawn(y = TOP_Y - 30 + Math.random() * 34): void {
-    let r = Math.random();
+    // 按 mix 抽一种；还没到出场波次的虫不出，刚出场的比例打折。
+    const n = Math.max(1, this.wave);
+    const weights = this.field.mix.map(([k, w]): [BugKind, number] => [k, w * clamp((n - KIND_FROM[k] + 1) / 3, 0, 1)]);
+    let r = Math.random() * weights.reduce((t, [, w]) => t + w, 0);
     let kind: BugKind = 'crawler';
-    for (const [k, w] of this.field.mix) {
+    for (const [k, w] of weights) {
       if (r < w) {
         kind = k;
         break;
@@ -683,7 +728,7 @@ export class DefenseScene {
       flyer: 26 + Math.random() * 10,
       serpent: 15 + Math.random() * 5,
       spitter: 16 + Math.random() * 6,
-    }[kind];
+    }[kind] * this.field.rush * waveRush(n);
     this.bugs.push({
       kind,
       look: looks[Math.floor(Math.random() * looks.length)],
@@ -753,8 +798,7 @@ export class DefenseScene {
     const size = BUG_SIZE[b.kind];
     const gib = blast > 0.15 || Math.random() < (b.kind === 'spitter' ? 0.8 : 0.4);
     // 血迹：方向就是"被从哪边打的"。打爆的那一滩更大、甩得更远。
-    this.splats.push({ x: b.x, y: b.y, t: 0, blobs: makeSplat(3 + size * 2.4, dx, dy, gib), blood: b.look.blood });
-    if (this.splats.length > 420) this.splats.shift();
+    this.addSplat({ x: b.x, y: b.y, t: 0, blobs: makeSplat(3 + size * 2.4, dx, dy, gib), blood: b.look.blood });
     if (gib) {
       this.shatter(b, dx / d, dy / d, blast);
       b.dead = 99; // 打爆的直接移除（碎片接着飞）
@@ -798,7 +842,7 @@ export class DefenseScene {
     const z = this.terrain.heightAt(x, y);
     this.fx.explode(x, y, z, size);
     // 金属地板炸不出坑，留一块焦黑。
-    this.splats.push({ x, y, t: 0, blobs: makeSplat(5 + size * 5, 0, 1, true), blood: [rgb(22, 24, 30), rgb(52, 50, 50)] });
+    this.addSplat({ x, y, t: 0, blobs: makeSplat(5 + size * 5, 0, 1, true), blood: [rgb(22, 24, 30), rgb(52, 50, 50)] });
     const r = (20 + size * 20) * (1 + (power - 1) * 0.3);
     for (const b of this.bugs) {
       if (b.dead >= 0 || b.lift > 20) continue;
@@ -907,22 +951,27 @@ export class DefenseScene {
       if (o.t >= POP_TIME) this.pops.splice(i, 1);
     }
     if (this.lost) this.lostT += dt;
-    // 波次：倒计时到了就来下一波；排着的虫按 WAVE_PACE 只 / 秒陆续刷出来（场上满了就等一等）。
-    if (this.waves && !this.lost) {
-      this.nextIn -= dt;
-      if (this.nextIn <= 0) this.launchWave();
-      if (this.pending > 0) {
-        this.spawnAcc += dt * WAVE_PACE * Math.max(1, this.field.waveScale);
-        let alive = this.bugs.reduce((n, b) => n + (b.dead < 0 ? 1 : 0), 0);
-        while (this.spawnAcc >= 1 && this.pending > 0 && alive < this.field.maxAlive) {
-          this.spawnAcc--;
-          this.pending--;
+    if (this.won) this.wonT += dt;
+    // 波次：倒计时到了就来下一波（最后一波来了就不再倒计时）；每一波剩下的虫按各自的速度从顶边涌出来（场上满了就等一等）。
+    if (this.waves && !this.lost && !this.won) {
+      this.sinceLaunch += dt;
+      if (this.wave < this.field.waves) {
+        this.nextIn -= dt;
+        if (this.nextIn <= 0) this.launchWave();
+      }
+      let alive = this.aliveCount();
+      for (const st of this.streams) {
+        st.acc = Math.min(st.acc + dt * st.rate, Math.max(2, st.rate));
+        while (st.acc >= 1 && st.left > 0 && alive < this.field.maxAlive) {
+          st.acc--;
+          st.left--;
           this.spawn();
           alive++;
         }
-        this.spawnAcc = Math.min(this.spawnAcc, 2);
       }
+      for (let i = this.streams.length - 1; i >= 0; i--) if (this.streams[i].left <= 0) this.streams.splice(i, 1);
     }
+    this.checkWin();
 
     for (let i = this.bugs.length - 1; i >= 0; i--) {
       const b = this.bugs[i];
@@ -1384,7 +1433,7 @@ export class DefenseScene {
     d.deadT = 0;
     d.target = null;
     d.burst = 0;
-    this.splats.push({ x: d.x, y: d.y + 2, t: 0, blobs: makeSplat(5, 0, 1, true), blood: [rgb(110, 16, 16), rgb(180, 36, 30)] });
+    this.addSplat({ x: d.x, y: d.y + 2, t: 0, blobs: makeSplat(5, 0, 1, true), blood: [rgb(110, 16, 16), rgb(180, 36, 30)] });
     // 不补位：尸体躺够了就清掉，兵营看到人数少了会自己再造。
   }
 
@@ -1464,7 +1513,7 @@ export class DefenseScene {
     const dmg = CORE_DMG[b.kind];
     if (t.kind === 'mech') this.hurtMech(t as Defender, dmg);
     else this.hurtStructure(t as Structure, dmg);
-    this.splats.push({ x: b.x, y: b.y, t: 0, blobs: makeSplat(3 + BUG_SIZE[b.kind] * 2.4, 0, -1, true), blood: b.look.blood });
+    this.addSplat({ x: b.x, y: b.y, t: 0, blobs: makeSplat(3 + BUG_SIZE[b.kind] * 2.4, 0, -1, true), blood: b.look.blood });
     this.shatter(b, 0, -1, 0.3);
     b.dead = 99;
   }
@@ -1533,7 +1582,7 @@ export class DefenseScene {
     this.coreHp = Math.max(0, this.coreHp - CORE_DMG[b.kind]);
     this.coreHit = 1;
     this.shake = Math.min(1, this.shake + 0.12);
-    this.splats.push({ x: b.x, y: b.y, t: 0, blobs: makeSplat(3 + BUG_SIZE[b.kind] * 2.4, b.x - CORE.x, b.y - CORE.y, true), blood: b.look.blood });
+    this.addSplat({ x: b.x, y: b.y, t: 0, blobs: makeSplat(3 + BUG_SIZE[b.kind] * 2.4, b.x - CORE.x, b.y - CORE.y, true), blood: b.look.blood });
     this.shatter(b, (b.x - CORE.x) / CORE_REACH, (b.y - CORE.y) / CORE_REACH, 0.3);
     b.dead = 99;
     if (this.coreHp <= 0) this.breakCore();
@@ -1794,8 +1843,15 @@ export class DefenseScene {
     this.waves = true;
   }
 
+  /** 最后一波来了、虫全清光：通关。 */
+  private checkWin(): void {
+    if (this.won || this.lost || !this.waves || this.wave < this.field.waves || this.bugsLeft > 0) return;
+    this.won = true;
+  }
+
   /** 来下一波：波数 +1，这一波的虫排进队列（和场上还没打完的叠在一起），倒计时重新开始。 */
   private launchWave(): void {
+    if (this.wave >= this.field.waves) return;
     // 上一波撑过去了：每突破 CREDIT_MILESTONE 波发一笔信用点。
     if (this.wave > 0 && this.wave % CREDIT_MILESTONE === 0) {
       const k = this.wave / CREDIT_MILESTONE;
@@ -1804,23 +1860,52 @@ export class DefenseScene {
       this.milestone = { wave: this.wave, amount };
     }
     this.wave++;
-    this.pending += waveSize(this.wave, this.field.waveScale);
-    this.nextIn = WAVE_GAP;
+    const size = waveSize(this.wave, this.field.waveScale, this.field.waves);
+    this.nextIn = this.wave < this.field.waves ? waveGap(this.wave) : 0;
+    this.sinceLaunch = 0;
+    // 先冲出来的一群：立刻刷出来（场上装得下多少出多少），从地图顶边往下铺成一长片（越多铺得越长），一路压下来。
+    const burst = Math.max(1, Math.round(size * WAVE_BURST));
+    const n = Math.max(0, Math.min(burst, this.field.maxAlive - this.aliveCount()));
+    const len = Math.min(WAVE_STRING_MAX, WAVE_STRING_MIN + n * WAVE_STRING);
+    // 分层撒：每只落在自己那一小段里，整片铺得匀，虫少时前头也一定有几只在镜头里。
+    for (let i = 0; i < n; i++) this.spawn(TOP_Y - 30 + (len * (i + Math.random())) / n);
+    // 剩下的（加上场上装不下的那部分）在这一波的时间里匀速涌出来。
+    const left = size - n;
+    if (left > 0) this.streams.push({ left, rate: (left / (waveGap(this.wave) * STREAM_SPAN)) * this.field.pace, acc: 0 });
   }
 
-  /** 下一波有多少只。 */
+  /** 还没涌出来的虫（所有波加起来）。 */
+  private get pending(): number {
+    return this.streams.reduce((t, st) => t + st.left, 0);
+  }
+
+  private aliveCount(): number {
+    return this.bugs.reduce((n, b) => n + (b.dead < 0 ? 1 : 0), 0);
+  }
+
+  /** 还要等几秒才能提前叫下一波（0 = 现在就能叫）。 */
+  get callLock(): number {
+    return Math.max(0, callLockOf(this.wave) - this.sinceLaunch);
+  }
+
+  /** 现在这段倒计时一共多长（HUD 的进度条用）。 */
+  get waveTimer(): number {
+    return this.wave === 0 ? WAVE_PREP : waveGap(this.wave);
+  }
+
+  /** 下一波有多少只（已经是最后一波就是 0）。 */
   get nextWaveSize(): number {
-    return waveSize(this.wave + 1, this.field.waveScale);
+    return this.wave < this.field.waves ? waveSize(this.wave + 1, this.field.waveScale, this.field.waves) : 0;
   }
 
   /** 现在提前叫下一波能拿多少晶矿（剩下的秒数 × EARLY_BONUS）。 */
   get earlyBonus(): number {
-    return this.waves && !this.lost ? Math.round(Math.max(0, this.nextIn) * EARLY_BONUS) : 0;
+    return this.waves && !this.lost && this.wave < this.field.waves ? Math.round(Math.max(0, this.nextIn) * EARLY_BONUS) : 0;
   }
 
   /** 提前叫下一波：按剩余倒计时给晶矿，下一波立刻来。返回给了多少晶矿（不能叫就是 -1）。 */
   callNextWave(): number {
-    if (!this.waves || this.lost) return -1;
+    if (!this.waves || this.lost || this.won || this.wave >= this.field.waves || (this.wave > 0 && this.callLock > 0)) return -1;
     const bonus = this.earlyBonus;
     this.crystals += bonus;
     this.launchWave();
@@ -2538,7 +2623,7 @@ export class DefenseScene {
       const g = this.globs[i];
       g.t += dt;
       if (g.t >= g.dur) {
-        this.splats.push({ x: g.to.x, y: g.to.y, t: 0, blobs: makeSplat(5, 0, 1, true), blood: [rgb(110, 200, 40), rgb(220, 255, 120)] });
+        this.addSplat({ x: g.to.x, y: g.to.y, t: 0, blobs: makeSplat(5, 0, 1, true), blood: [rgb(110, 200, 40), rgb(220, 255, 120)] });
         this.fx.poof(g.to.x, g.to.y, g.to.z, 0.8);
         const m = this.marineNear(g.to.x, g.to.y, 12);
         if (m) this.hurtMarine(m, ACID_DMG, 'acid');
@@ -2634,8 +2719,26 @@ export class DefenseScene {
     }
     for (let i = this.splats.length - 1; i >= 0; i--) {
       this.splats[i].t += dt;
-      if (this.splats[i].t > 18) this.splats.splice(i, 1);
+      if (this.splats[i].t > SPLAT_LIFE) this.splats.splice(i, 1);
     }
+  }
+
+  /**
+   * 地上添一摊血。虫成群死在防线前，同一处会一层层叠得发黑：附近（SPLAT_NEAR 以内）已经有 SPLAT_CROWD 摊的，
+   * 先把那里最老的一摊去掉；全场最多 SPLAT_MAX 摊。
+   */
+  private addSplat(o: Splat): void {
+    let near = 0;
+    let oldest = -1;
+    for (let i = 0; i < this.splats.length; i++) {
+      const q = this.splats[i];
+      if (Math.abs(q.x - o.x) > SPLAT_NEAR || Math.abs(q.y - o.y) > SPLAT_NEAR) continue;
+      near++;
+      if (oldest < 0 || q.t > this.splats[oldest].t) oldest = i;
+    }
+    if (near >= SPLAT_CROWD && oldest >= 0) this.splats.splice(oldest, 1);
+    this.splats.push(o);
+    if (this.splats.length > SPLAT_MAX) this.splats.shift();
   }
 
   shellPos(s: Shell): Vec3 {
@@ -2949,7 +3052,7 @@ export class DefenseScene {
 
     for (const o of this.splats) {
       const at = cam.worldToScreenZ(o.x, o.y, this.terrain.heightAt(o.x, o.y));
-      drawSplat(ground, at, o.blobs, o.blood, g, Projection.groundSquash, Math.min(1, (18 - o.t) / 6), 1e6 + o.y);
+      drawSplat(ground, at, o.blobs, o.blood, g, Projection.groundSquash, Math.min(1, (SPLAT_LIFE - o.t) / SPLAT_FADE), 1e6 + o.y);
     }
 
     for (const b of this.bugs) {

@@ -366,13 +366,16 @@ export const MENU_CSS = `
   transition: opacity .2s;
 }
 .pdw-hud.hidden { opacity: 0; }
+/* 右边这一列（波次面板、晶矿、信用点、建造列表）一样宽，右边缘对齐。 */
+.pdw-hud { --hud-w: 220px; }
+.pdw-hud, .pdw-hud * { box-sizing: border-box; }
 .pdw-crystal {
-  display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px;
+  display: flex; align-items: center; gap: 6px; width: var(--hud-w); height: 34px; padding: 0 14px;
   background: rgba(9, 14, 26, .86); border: 2px solid var(--line);
   clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
 }
 .pdw-crystal svg { width: 16px; height: 16px; color: #5fd8e8; }
-.pdw-crystal b { min-width: 48px; font: 700 18px Consolas, monospace; color: #dff8ff; text-align: right; }
+.pdw-crystal b { flex: 1; font: 700 18px Consolas, monospace; color: #dff8ff; text-align: right; }
 .pdw-crystal em { font-style: normal; font-size: 12px; color: var(--muted); }
 .pdw-credit svg { color: var(--orange); }
 .pdw-credit b { color: #ffe2a8; }
@@ -381,16 +384,17 @@ export const MENU_CSS = `
 
 /* ---------------------------------------------------------------- 波次面板（右上角，晶矿上面） */
 .pdw-wave {
-  width: 210px; padding: 8px 10px 9px; pointer-events: auto;
+  /* 每一行都不换行：数字再长面板也不会变高。 */
+  width: var(--hud-w); padding: 8px 10px 9px; pointer-events: auto; white-space: nowrap;
   background: rgba(9, 14, 26, .86); border: 2px solid var(--line);
   clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
 }
 .pdw-wave.hidden { display: none; }
-.pdw-wave-now { display: flex; align-items: baseline; gap: 8px; }
-.pdw-wave-now span { font-size: 11px; color: var(--muted); letter-spacing: 2px; }
-.pdw-wave-now b { font-size: 17px; letter-spacing: 2px; color: #fff; }
+.pdw-wave-now { display: flex; align-items: baseline; gap: 8px; height: 24px; }
+.pdw-wave-now b { overflow: hidden; text-overflow: ellipsis; font-size: 17px; letter-spacing: 1px; color: #fff; }
 .pdw-wave-now em { margin-left: auto; font: 700 12px Consolas, "Microsoft YaHei", monospace; font-style: normal; color: #e0909a; }
-.pdw-wave-next { display: flex; align-items: baseline; gap: 6px; margin-top: 4px; font-size: 11px; color: var(--muted); }
+.pdw-wave-next { display: flex; align-items: baseline; gap: 6px; height: 20px; margin-top: 4px; font-size: 11px; color: var(--muted); }
+.pdw-wave-next span { overflow: hidden; text-overflow: ellipsis; }
 .pdw-wave-next b { margin-left: auto; font: 700 16px Consolas, monospace; color: #ffc446; }
 .pdw-wave.soon .pdw-wave-next b { color: #ff6a5a; animation: pdw-blink .6s steps(2) infinite; }
 .pdw-wave-bar { height: 4px; margin: 5px 0 7px; background: #0b1020; }
@@ -439,6 +443,11 @@ export const MENU_CSS = `
 .pdw-over-panel::before { content: ""; position: absolute; left: 0; top: 0; width: 80px; height: 3px; background: #e0505a; }
 .pdw-over-panel small { font: 700 11px Consolas, monospace; letter-spacing: 4px; color: #e0505a; }
 .pdw-over-panel h2 { margin: 4px 0 16px; font-size: 26px; letter-spacing: 6px; color: #fff; text-shadow: 2px 2px 0 #4a0e14; }
+.pdw-over.win { background: radial-gradient(ellipse at center, rgba(8, 36, 20, .5), rgba(3, 4, 8, .8)); }
+.pdw-over.win .pdw-over-panel { border-color: #3e7a52; }
+.pdw-over.win .pdw-over-panel::before { background: #6ee08a; }
+.pdw-over.win .pdw-over-panel small { color: #6ee08a; }
+.pdw-over.win .pdw-over-panel h2 { text-shadow: 2px 2px 0 #0e3a1c, 0 0 18px rgba(110, 224, 138, .45); }
 .pdw-over-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 18px; }
 .pdw-over-stats div { display: flex; flex-direction: column; gap: 2px; padding: 8px; background: rgba(20, 30, 52, .6); border-left: 2px solid var(--line-hi); }
 .pdw-over-stats span { font-size: 11px; color: var(--muted); }
@@ -450,7 +459,7 @@ export const MENU_CSS = `
 .pdw-build { display: flex; flex-direction: column; gap: 6px; pointer-events: auto; transition: opacity .2s; }
 .pdw-build.hidden { display: none; }
 .pdw-build-item {
-  position: relative; display: flex; align-items: center; gap: 8px; width: 176px; padding: 4px 10px 4px 4px;
+  position: relative; display: flex; align-items: center; gap: 8px; width: var(--hud-w); padding: 4px 10px 4px 4px;
   color: var(--text); font: inherit; text-align: left; cursor: pointer;
   background: rgba(9, 14, 26, .86); border: 2px solid var(--line);
   clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
@@ -475,8 +484,10 @@ export const MENU_CSS = `
 
 /* ---------------------------------------------------------------- 建筑升级面板（头顶弹出） */
 .pdw-tip {
-  /* 半透明、不挡鼠标：隔着面板也能看到后面、右键设集结点；只有按钮能点（见下面的 pointer-events: auto）。 */
-  position: absolute; z-index: 8; width: 268px; padding: 8px 10px 10px; pointer-events: none;
+  /* 半透明：隔着面板也能看到后面。左键点在面板里不会取消选中；右键、滚轮转给画布（隔着面板也能设集结点、缩放）。 */
+  position: absolute; z-index: 8; width: 268px; padding: 8px 10px 10px;
+  /* 点文字不出输入光标、不选中文字，鼠标一直是箭头。 */
+  cursor: default; user-select: none; -webkit-user-select: none; caret-color: transparent;
   transform: translate(-50%, -100%);
   color: var(--text); font: 12px/1.5 "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   background: rgba(9, 14, 26, .62); border: 2px solid rgba(130, 166, 240, .75);
@@ -486,7 +497,6 @@ export const MENU_CSS = `
 .pdw-tip::before { content: ""; position: absolute; left: 0; top: 0; width: 48px; height: 3px; background: var(--orange); }
 .pdw-tip-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .pdw-tip-head b { font-size: 14px; letter-spacing: 2px; }
-.pdw-tip button { pointer-events: auto; }
 .pdw-tip-x {
   margin-left: auto; width: 20px; height: 20px; padding: 0; line-height: 16px; cursor: pointer;
   color: var(--muted); background: transparent; border: 1px solid var(--line); font-size: 14px;

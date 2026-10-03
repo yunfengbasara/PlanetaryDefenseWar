@@ -4,9 +4,10 @@ import type { BattleState } from '../game/main';
  * 局内 HUD：
  *
  *   右上角   波次面板（当前第几波、场上还剩多少虫；下一波第几波、多少只、倒计时；"下一波"按钮，
- *            提前叫按剩余秒数给晶矿）→ 晶矿数 → 本局挣到的信用点 → （外面挂上来的）建造列表
+ *            提前叫按剩余秒数给晶矿，上一波刚来时要等几秒才能再叫）→ 晶矿数 → 本局挣到的信用点 → （外面挂上来的）建造列表
  *   上方正中 每来一波闪一行"第 N 波来袭"；刚突破里程碑的话下面再加一行"突破第 N 波 · 信用点 +M"
- *   结算     核心碎了之后弹（坚守时间、坚持到第几波、本局信用点；重新开始 / 返回主界面）
+ *   结算     核心碎了（失败）或者打完最后一波（通关）之后弹：用时、波次、本局信用点（通关再加首通奖励）；
+ *            重新开始 / 返回主界面
  *
  * 核心血条画在战场里核心的正下方，不在这儿。只管显示，每帧从 state() 读数；样式在 style.ts 的
  * .pdw-hud、.pdw-wave、.pdw-banner、.pdw-over。
@@ -51,18 +52,20 @@ export class Hud {
   private shownWave = 0;
   private bannerT = 0;
   private overShown = false;
+  /** 这一局的首通奖励（通关时外面填进来，结算里加到信用点上）。 */
+  clearReward = 0;
 
   constructor(host: HTMLElement, actions: HudActions) {
     this.bar.className = 'pdw-hud hidden';
     this.bar.innerHTML = `
       <div class="pdw-wave">
-        <div class="pdw-wave-now"><span>波次</span><b data-f="now"></b><em data-f="left"></em></div>
+        <div class="pdw-wave-now"><b data-f="now"></b><em data-f="left"></em></div>
         <div class="pdw-wave-next">
           <span data-f="next"></span>
           <b data-f="time"></b>
         </div>
         <div class="pdw-wave-bar"><i data-f="bar"></i></div>
-        <button class="pdw-btn pdw-wave-call" data-act="next"><span>下一波</span><em>${CRYSTAL_ICON}<i data-f="bonus"></i></em></button>
+        <button class="pdw-btn pdw-wave-call" data-act="next"><span data-f="call">下一波</span><em>${CRYSTAL_ICON}<i data-f="bonus"></i></em></button>
       </div>
       <div class="pdw-crystal">${CRYSTAL_ICON}<b></b><em>晶矿</em></div>
       <div class="pdw-crystal pdw-credit">${CREDIT_ICON}<b></b><em>信用点</em></div>`;
@@ -77,11 +80,11 @@ export class Hud {
     this.over.className = 'pdw-over hidden';
     this.over.innerHTML = `
       <div class="pdw-over-panel">
-        <small>MISSION FAILED</small>
-        <h2>核心被摧毁</h2>
+        <small data-k="tag"></small>
+        <h2 data-k="title"></h2>
         <div class="pdw-over-stats">
-          <div><span>坚守时间</span><b data-k="time"></b></div>
-          <div><span>坚持到</span><b data-k="wave"></b></div>
+          <div><span data-k="timeLabel"></span><b data-k="time"></b></div>
+          <div><span data-k="waveLabel"></span><b data-k="wave"></b></div>
           <div><span>获得信用点</span><b data-k="credits"></b></div>
         </div>
         <div class="pdw-over-actions">
@@ -107,6 +110,7 @@ export class Hud {
     this.over.classList.add('hidden');
     this.banner.classList.add('hidden');
     this.overShown = false;
+    this.clearReward = 0;
     this.shownCrystals = -1;
     this.shownCredits = -1;
     this.shownWave = 0;
@@ -143,7 +147,8 @@ export class Hud {
       this.shownWave = st.wave.current;
       const m = st.milestone;
       const bonus = m && m.wave === st.wave.current - 1 ? `<em>${CREDIT_ICON}突破第 ${m.wave} 波 · 信用点 +${m.amount}</em>` : '';
-      this.banner.innerHTML = `<small>WAVE ${st.wave.current}</small><b>第 ${st.wave.current} 波来袭</b>${bonus}`;
+      const last = st.wave.current === st.wave.total;
+      this.banner.innerHTML = `<small>${last ? 'FINAL WAVE' : `WAVE ${st.wave.current}`}</small><b>${last ? '最终波来袭' : `第 ${st.wave.current} 波来袭`}</b>${bonus}`;
       this.banner.classList.remove('hidden');
       // 重播动画：去掉再加回 class。
       this.banner.classList.remove('show');
@@ -155,12 +160,22 @@ export class Hud {
       this.bannerT -= dt;
       if (this.bannerT <= 0) this.banner.classList.add('hidden');
     }
-    if (st.lost && st.lostT >= OVER_DELAY && !this.overShown) {
+    const lost = st.lost && st.lostT >= OVER_DELAY;
+    const won = st.won && st.wonT >= OVER_DELAY;
+    if ((lost || won) && !this.overShown) {
       this.overShown = true;
       const t = Math.floor(st.time);
-      this.over.querySelector('[data-k=time]')!.textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
-      this.over.querySelector('[data-k=wave]')!.textContent = `第 ${st.wave.current} 波`;
-      this.over.querySelector('[data-k=credits]')!.textContent = `+${st.credits.toLocaleString()}`;
+      const k = (key: string, text: string): void => {
+        this.over.querySelector(`[data-k=${key}]`)!.textContent = text;
+      };
+      this.over.classList.toggle('win', won);
+      k('tag', won ? 'MISSION COMPLETE' : 'MISSION FAILED');
+      k('title', won ? '防线守住了' : '核心被摧毁');
+      k('timeLabel', won ? '用时' : '坚守时间');
+      k('time', `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`);
+      k('waveLabel', won ? '击退' : '坚持到');
+      k('wave', won ? `${st.wave.total} 波` : `第 ${st.wave.current} / ${st.wave.total} 波`);
+      k('credits', `+${(st.credits + (won ? this.clearReward : 0)).toLocaleString()}`);
       this.over.classList.remove('hidden');
     }
   }
@@ -171,14 +186,18 @@ export class Hud {
     this.waveEl.classList.toggle('hidden', !w.started);
     if (!w.started) return;
     const q = (f: string): Element => this.waveEl.querySelector(`[data-f=${f}]`)!;
-    setText(q('now'), w.current === 0 ? '准备中' : `第 ${w.current} 波`);
+    const last = w.current >= w.total;
+    setText(q('now'), w.current === 0 ? '准备中' : `第 ${w.current}/${w.total} 波`);
     setText(q('left'), w.current === 0 ? '' : `剩余 ${w.left}`);
-    setText(q('next'), `下一波 · 第 ${w.current + 1} 波 · ${w.nextSize} 只`);
-    setText(q('time'), clock(w.nextIn));
-    (q('bar') as HTMLElement).style.width = `${Math.max(0, Math.min(1, w.nextIn / (w.current === 0 ? 20 : 30))) * 100}%`;
+    setText(q('next'), last ? '最终波 · 清光虫群即通关' : `下一波 · ${w.nextSize} 只`);
+    setText(q('time'), last ? '' : clock(w.nextIn));
+    (q('bar') as HTMLElement).style.width = `${last ? 0 : Math.max(0, Math.min(1, w.nextIn / w.timer)) * 100}%`;
     setText(q('bonus'), `+${w.bonus}`);
     const btn = this.waveEl.querySelector('button') as HTMLButtonElement;
-    if (btn.disabled !== st.lost) btn.disabled = st.lost;
-    this.waveEl.classList.toggle('soon', w.nextIn <= 5);
+    // 上一波刚来（或还没刷完）时要等一会儿才能再叫，按钮上倒数。
+    setText(q('call'), !last && w.lock > 0 ? `下一波 ${Math.ceil(w.lock)}s` : '下一波');
+    const off = st.lost || st.won || last || w.lock > 0;
+    if (btn.disabled !== off) btn.disabled = off;
+    this.waveEl.classList.toggle('soon', !last && w.nextIn <= 5);
   }
 }

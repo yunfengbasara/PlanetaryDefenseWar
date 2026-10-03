@@ -1,4 +1,5 @@
 import type { BugKind } from '../game/bugs';
+import { FIELDS, type FieldDef } from '../game/fields';
 import { save } from '../save';
 import type { GuideStep } from './hints';
 
@@ -33,7 +34,10 @@ export interface MapInfo {
   /** 难度 1~5。 */
   difficulty: number;
   desc: string;
-  stats: { label: string; value: string }[];
+  /** 战区类型（详情里的一格）。 */
+  zone: string;
+  /** 首通奖励（信用点）。 */
+  reward: number;
   enemies: EnemyInfo[];
 }
 
@@ -55,6 +59,23 @@ export const TUTORIAL_UNLOCK = '通过新手引导解锁';
 export const isLocked = (m: MapInfo): boolean => m.locked || (!!m.afterTutorial && !save.tutorialDone);
 export const unlockText = (m: MapInfo): string => (m.locked ? (m.unlock ?? '') : TUTORIAL_UNLOCK);
 
+/** 虫群速度的说法：按刷虫速度 × 移动速度分档。 */
+function speedText(f: FieldDef): string {
+  const k = f.pace * f.rush;
+  return k < 0.8 ? '慢' : k < 1.15 ? '中' : k < 1.5 ? '快' : '极快';
+}
+
+/** 详情里的那几格：战区类型、通关波次、虫群速度、首通奖励（波次和速度从战场定义读）。 */
+export function mapStats(m: MapInfo): { label: string; value: string }[] {
+  const f = FIELDS[m.field];
+  return [
+    { label: '战区类型', value: m.zone },
+    { label: '通关波次', value: `${f.waves} 波` },
+    { label: '虫群速度', value: speedText(f) },
+    { label: '首通奖励', value: m.reward.toLocaleString() },
+  ];
+}
+
 export const MAPS: MapInfo[] = [
   {
     id: 'training-ground',
@@ -65,12 +86,8 @@ export const MAPS: MapInfo[] = [
     locked: false,
     difficulty: 1,
     desc: '一条很窄的训练通道，开局什么都没有：用晶矿建兵营、机器人车间和炮台，亲手搭起第一道防线。来的只是零星的小虫，跟着引导熟悉建造和升级。',
-    stats: [
-      { label: '战区类型', value: '新手引导' },
-      { label: '初始晶矿', value: '200' },
-      { label: '推荐时长', value: '5 分钟' },
-      { label: '首通奖励', value: '300' },
-    ],
+    zone: '新手引导',
+    reward: 300,
     enemies: enemies('crawler', 'hopper'),
     hints: [
       { text: '欢迎来到新兵训练场！这里还什么都没有，虫群也暂时不会来。先用晶矿把防线建起来。' },
@@ -90,12 +107,8 @@ export const MAPS: MapInfo[] = [
     afterTutorial: true,
     difficulty: 3,
     desc: '一条悬在深空里的金属平台。虫群顺着前方的窄通道涌下来，守住防线，别让它们碰到后方的兵营和指挥中心。',
-    stats: [
-      { label: '战区类型', value: '轨道防御' },
-      { label: '敌群规模', value: '无尽' },
-      { label: '推荐时长', value: '5 分钟' },
-      { label: '首通奖励', value: '1,200' },
-    ],
+    zone: '轨道防御',
+    reward: 1200,
     enemies: ALL_ENEMIES,
   },
   {
@@ -108,12 +121,8 @@ export const MAPS: MapInfo[] = [
     afterTutorial: true,
     difficulty: 4,
     desc: '一颗干旱行星上的峡谷要道。通道更宽，虫群里甲虫和喷酸虫明显更多；防线前垒了一排沙袋，后方是一片可以建造的水泥地坪。',
-    stats: [
-      { label: '战区类型', value: '地表防御' },
-      { label: '敌群规模', value: '无尽' },
-      { label: '推荐时长', value: '6 分钟' },
-      { label: '首通奖励', value: '1,800' },
-    ],
+    zone: '地表防御',
+    reward: 1800,
     enemies: enemies('crawler', 'beetle', 'spitter', 'serpent', 'hopper', 'flyer'),
   },
   {
@@ -126,12 +135,8 @@ export const MAPS: MapInfo[] = [
     afterTutorial: true,
     difficulty: 3,
     desc: '一片布满陨石坑的灰色月海。没有大气，飞虫上不来；可低重力让跳虫蹦得又高又远，防线前竖起了一排金属挡板。',
-    stats: [
-      { label: '战区类型', value: '月面防御' },
-      { label: '敌群规模', value: '无尽' },
-      { label: '推荐时长', value: '5 分钟' },
-      { label: '首通奖励', value: '1,500' },
-    ],
+    zone: '月面防御',
+    reward: 1500,
     enemies: enemies('crawler', 'hopper', 'beetle', 'serpent', 'spitter'),
   },
   {
@@ -144,12 +149,8 @@ export const MAPS: MapInfo[] = [
     afterTutorial: true,
     difficulty: 4,
     desc: '暴风雪里的一座极地前哨。通道两侧是冰棱和雪堆，刺蛇在冻土下格外活跃；暴雪挡住了轨道支援，这一仗呼叫不了巨舰。',
-    stats: [
-      { label: '战区类型', value: '极地防御' },
-      { label: '敌群规模', value: '无尽' },
-      { label: '推荐时长', value: '6 分钟' },
-      { label: '首通奖励', value: '2,200' },
-    ],
+    zone: '极地防御',
+    reward: 2200,
     enemies: enemies('serpent', 'crawler', 'hopper', 'beetle', 'spitter', 'flyer'),
   },
   {
@@ -162,12 +163,8 @@ export const MAPS: MapInfo[] = [
     afterTutorial: true,
     difficulty: 5,
     desc: '直插虫巢腹地的突击阵地。脚下是会喘气的菌毯，四周长满卵囊和骨刺；虫群刷得最快、重甲和喷酸虫最多，这是最后的考验。',
-    stats: [
-      { label: '战区类型', value: '巢穴突击' },
-      { label: '敌群规模', value: '极多' },
-      { label: '推荐时长', value: '8 分钟' },
-      { label: '首通奖励', value: '3,600' },
-    ],
+    zone: '巢穴突击',
+    reward: 3600,
     enemies: enemies('beetle', 'spitter', 'serpent', 'crawler', 'hopper', 'flyer'),
   },
   {
@@ -180,12 +177,8 @@ export const MAPS: MapInfo[] = [
     afterTutorial: true,
     difficulty: 4,
     desc: '在一艘全速航行的巨型星舰背上迎战。虫群从船头方向扑来，中轴的能量导管直通水晶核心；两侧船舷外就是呼啸而过的星空，飞虫格外多。',
-    stats: [
-      { label: '战区类型', value: '舰上防御' },
-      { label: '敌群规模', value: '无尽' },
-      { label: '推荐时长', value: '6 分钟' },
-      { label: '首通奖励', value: '2,800' },
-    ],
+    zone: '舰上防御',
+    reward: 2800,
     enemies: enemies('crawler', 'flyer', 'hopper', 'spitter', 'beetle', 'serpent'),
   },
   {
@@ -198,12 +191,8 @@ export const MAPS: MapInfo[] = [
     afterTutorial: true,
     difficulty: 4,
     desc: '水晶核心坐镇正中的高台，上下左右四条路直通高台的坡道，虫群从四个方向同时涌来。在高台上建好据点，把兵力分派到四个路口。',
-    stats: [
-      { label: '战区类型', value: '四面防守' },
-      { label: '初始晶矿', value: '500' },
-      { label: '推荐时长', value: '8 分钟' },
-      { label: '首通奖励', value: '3,000' },
-    ],
+    zone: '四面防守',
+    reward: 3000,
     enemies: enemies('crawler', 'hopper', 'beetle', 'flyer'),
   },
 ];

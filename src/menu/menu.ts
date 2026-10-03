@@ -8,7 +8,7 @@ import { Projection } from '../render/projection';
 import { Projector } from '../render/projector';
 import { Snapshotter } from '../render/snapshot';
 import { save } from '../save';
-import { ACHIEVEMENTS, MAPS, type MapInfo, SHOP_ITEMS, isLocked, unlockText } from './data';
+import { ACHIEVEMENTS, MAPS, type MapInfo, SHOP_ITEMS, isLocked, mapStats, unlockText } from './data';
 import { shopIcon } from './shopIcons';
 import { MENU_CSS } from './style';
 
@@ -176,7 +176,7 @@ export class MainMenu {
           <div class="pdw-map-row"><span class="pdw-idx">${m.index}</span><b>${m.name}</b></div>
           <small>${m.code}</small>
           <div class="pdw-map-row sub">
-            ${locked ? `<span class="pdw-status locked">${unlockText(m)}</span>` : '<span class="pdw-status ok">可部署</span>'}
+            ${locked ? `<span class="pdw-status locked">${unlockText(m)}</span>` : save.isCleared(m.id) ? '<span class="pdw-status ok">已通关</span>' : '<span class="pdw-status ok">可部署</span>'}
             <span class="pdw-pips sm">${pips(m.difficulty)}</span>
           </div>
         </div>`;
@@ -223,7 +223,7 @@ export class MainMenu {
           <p class="pdw-desc">${m.desc}</p>
           <div class="pdw-stats">
             <div class="pdw-stat"><span>难度</span><b class="pdw-pips">${pips(m.difficulty)}</b></div>
-            ${m.stats.map((s) => `<div class="pdw-stat"><span>${s.label}</span><b>${s.value}</b></div>`).join('')}
+            ${mapStats(m).map((s) => `<div class="pdw-stat"><span>${s.label}</span><b>${s.value}</b></div>`).join('')}
           </div>
         </div>
         <div class="pdw-col pdw-scroll">

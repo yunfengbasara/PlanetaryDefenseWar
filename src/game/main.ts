@@ -69,8 +69,11 @@ export interface BattleState {
   lostT: number;
   /** 这一局打了多久（秒）。 */
   time: number;
-  /** 波次：当前第几波（0 = 还没开始）、离下一波几秒、下一波多少只、场上 + 排队的虫、提前叫能拿多少晶矿；虫群开始进攻了没有。 */
-  wave: { current: number; nextIn: number; nextSize: number; left: number; bonus: number; started: boolean };
+  /** 波次：当前第几波（0 = 还没开始）、一共几波、离下一波几秒（这段倒计时一共多长）、下一波多少只、场上 + 排队的虫、提前叫能拿多少晶矿、还要等几秒才能提前叫；虫群开始进攻了没有。 */
+  wave: { current: number; total: number; nextIn: number; timer: number; nextSize: number; left: number; bonus: number; lock: number; started: boolean };
+  /** 通关了没有（最后一波打完、虫清光），通关了多久。 */
+  won: boolean;
+  wonT: number;
   /** 建造相关的状态（放置中、造了什么、巨舰、引导用的标记）。 */
   build: BuildState;
 }
@@ -101,7 +104,7 @@ const SNAP = 4;
 /**
  * 阵地防守。镜头固定在防线后上方，往上看着敌人推过来；滚轮缩放、左键拖动平移。
  * 建造模式下：左键点空地放建筑（放置模式时）或者点选建筑（弹升级面板），右键 / Esc 取消放置；
- * 选中兵营 / 车间时右键地面设集结点；选中巨舰时右键让它慢慢开过去。
+ * 选中兵营 / 车间时右键地面设集结点；选中巨舰时右键让它慢慢开过去。已经选着东西时，左键点哪儿（升级面板以外）都只是取消选中。
  *
  * 只在 start() 之后才有战场、才更新；主界面期间什么都不跑。
  */
@@ -242,6 +245,11 @@ export function bootDefense(app: Application): DefenseHandle {
       }
       return;
     }
+    // 已经选着东西：这一下只取消选中（点到别的建筑也不顺手选上）—— 选中、取消分两步。
+    if (battle.selected !== null) {
+      select(null);
+      return;
+    }
     // 没点到建筑：看看是不是点到了巨舰（它浮在战场旁边）。
     select(hitStruct?.id ?? (battle.cruiserAt(w.x, w.y) ? CRUISER_ID : null));
   });
@@ -321,7 +329,9 @@ export function bootDefense(app: Application): DefenseHandle {
         lost: b.lost,
         lostT: b.lostT,
         time: b.time,
-        wave: { current: b.wave, nextIn: b.nextIn, nextSize: b.nextWaveSize, left: b.bugsLeft, bonus: b.earlyBonus, started: b.waves },
+        wave: { current: b.wave, total: b.field.waves, nextIn: b.nextIn, timer: b.waveTimer, nextSize: b.nextWaveSize, left: b.bugsLeft, bonus: b.earlyBonus, lock: b.wave > 0 ? b.callLock : 0, started: b.waves },
+        won: b.won,
+        wonT: b.wonT,
         build: {
           waves: b.waves,
           placing,

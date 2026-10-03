@@ -15,6 +15,7 @@ createApp().then((app) => {
   let current: MapInfo | null = null;
   /** 这一局已经存进存档的信用点（局里挣到的减去它就是还没存的）。 */
   let banked = 0;
+  let cleared = false;
 
   // 游戏内左上角的"主界面"按钮。
   const back = document.createElement('button');
@@ -25,6 +26,7 @@ createApp().then((app) => {
   const play = (map: MapInfo): void => {
     current = map;
     banked = 0;
+    cleared = false;
     menu.hide();
     tip.open(null);
     game.start(map.field);
@@ -68,6 +70,11 @@ createApp().then((app) => {
     if (st && st.credits > banked) {
       save.addCredits(st.credits - banked);
       banked = st.credits;
+    }
+    // 通关：记进存档，第一次通关发首通奖励（结算里一起显示）。
+    if (st && st.won && current && !cleared) {
+      cleared = true;
+      hud.clearReward = save.clearMap(current.id, current.reward);
     }
     menu.update(dt);
     hints.update(dt, st, (t) => {
