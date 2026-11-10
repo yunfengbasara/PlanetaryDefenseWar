@@ -1,13 +1,16 @@
 import { createApp, stageElement } from './app';
 import { bootDefense } from './game/main';
 import { BuildPanel, UpgradeTip } from './menu/build';
-import type { MapInfo } from './menu/data';
+import { type MapInfo, currentPerks } from './menu/data';
+import { applyLivery } from './game/livery';
 import { Hud } from './menu/hud';
 import { MainMenu } from './menu/menu';
 import { TutorialHints } from './menu/hints';
 import { save } from './save';
 
 createApp().then((app) => {
+  // 存档里换过涂装的话，开机就换上（建造列表、商城的图标也按它画）。
+  applyLivery(save.livery);
   const stage = stageElement();
   const game = bootDefense(app);
   const hints = new TutorialHints(stage);
@@ -16,6 +19,9 @@ createApp().then((app) => {
   /** 这一局已经存进存档的信用点（局里挣到的减去它就是还没存的）。 */
   let banked = 0;
   let cleared = false;
+  /** 这一局是不是无尽模式；无尽模式的纪录记过没有。 */
+  let endless = false;
+  let recorded = false;
 
   // 游戏内左上角的"主界面"按钮。
   const back = document.createElement('button');
@@ -31,19 +37,22 @@ createApp().then((app) => {
     hud.setPaused(on);
   };
 
-  const play = (map: MapInfo): void => {
+  const play = (map: MapInfo, mode = false): void => {
     setPaused(false);
     current = map;
+    endless = mode;
     banked = 0;
     cleared = false;
+    recorded = false;
+    applyLivery(save.livery);
     menu.hide();
     tip.open(null);
-    game.start(map.field);
+    game.start(map.field, { endless, perks: currentPerks() });
     hud.show();
     build.show();
     back.classList.remove('hidden');
     // 有引导就跟着引导走，走完 / 跳过才开始刷怪，同时记下"引导过了"（其他地图就此开放）；别的地图直接开打。
-    if (map.hints)
+    if (map.hints && !endless)
       hints.play(map.hints, () => {
         save.finishTutorial();
         game.startWaves();
@@ -63,14 +72,14 @@ createApp().then((app) => {
   };
 
   const hud = new Hud(stage, {
-    restart: () => current && play(current),
+    restart: () => current && play(current, endless),
     quit,
     nextWave: () => game.nextWave(),
     resume: () => setPaused(false),
   });
   const build = new BuildPanel(app, game);
   hud.attach(build.el);
-  const menu = new MainMenu(app, stage, { onStart: play });
+  const menu = new MainMenu(app, stage, { onStart: (m, e) => play(m, e) });
   back.addEventListener('click', quit);
   game.onSelect((id) => tip.open(id));
   // Esc：没在放建筑、没选中东西时开 / 关暂停界面（结算弹出来以后不管）。
@@ -91,6 +100,12 @@ createApp().then((app) => {
     if (st && st.won && current && !cleared) {
       cleared = true;
       hud.clearReward = save.clearMap(current.id, current.reward);
+    }
+    // 无尽模式打到核心碎掉：记下打到第几波（破纪录结算里标出来）。
+    if (st && st.lost && endless && current && !recorded) {
+      recorded = true;
+      const best = save.endlessBest(current.id);
+      hud.endlessRecord = save.recordEndless(current.id, st.wave.current) ? { best: st.wave.current, isNew: true } : { best, isNew: false };
     }
     menu.update(dt);
     hints.update(dt, st, (t) => {

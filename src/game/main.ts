@@ -7,12 +7,12 @@ import { AIRSTRIKE_COST, BUILDS, CRUISER_ID, type BuildKind, type StatKey } from
 import { ARM, CROSS_C } from './crossmap';
 import { field, useField } from './fields';
 import { END_Y, FRAME_W, LANE_CX, TOP_Y } from './floor';
-import { BUILD_FRONT, CORE, DefenseScene, RALLY_MAX, type StructureInfo } from './scene';
+import { BUILD_FRONT, CORE, DefenseScene, type Perks, RALLY_MAX, type StructureInfo, waveBuff } from './scene';
 
 /** 主界面拿来开关战场的把手。 */
 export interface DefenseHandle {
-  /** 在给定战场上开一局新的：建战场、镜头回到默认取景、开始跑。 */
-  start(fieldId: string): void;
+  /** 在给定战场上开一局新的：建战场、镜头回到默认取景、开始跑。endless：无尽模式；perks：商城强化。 */
+  start(fieldId: string, opts?: { endless?: boolean; perks?: Perks }): void;
   /** 停下并藏起战场（回主界面）。 */
   stop(): void;
   /** 局内状态（HUD 用）；没在打就是 null。 */
@@ -75,6 +75,12 @@ export interface BattleState {
   time: number;
   /** 波次：当前第几波（0 = 还没开始）、一共几波、离下一波几秒（这段倒计时一共多长）、下一波多少只、场上 + 排队的虫、提前叫能拿多少晶矿、还要等几秒才能提前叫；虫群开始进攻了没有。 */
   wave: { current: number; total: number; nextIn: number; timer: number; nextSize: number; left: number; bonus: number; lock: number; started: boolean };
+  /** 无尽模式（total 为 0）；当前这一波虫的血量倍率、防御（波次成长 + 无尽加成）。 */
+  endless: boolean;
+  buff: { hp: number; armor: number };
+  /** 场上血最多的 Boss（HUD 顶上的血条）；最近一次来 Boss 是第几波。 */
+  boss: { name: string; hp: number; max: number } | null;
+  bossWave: number;
   /** 通关了没有（最后一波打完、虫清光），通关了多久。 */
   won: boolean;
   wonT: number;
@@ -319,10 +325,10 @@ export function bootDefense(app: Application): DefenseHandle {
   });
 
   return {
-    start: (fieldId) => {
+    start: (fieldId, opts) => {
       paused = false;
       useField(fieldId);
-      battle = new DefenseScene();
+      battle = new DefenseScene(opts);
       placing = null;
       rallyEver = false;
       pan = v2(0, 0);
@@ -352,7 +358,11 @@ export function bootDefense(app: Application): DefenseHandle {
         lost: b.lost,
         lostT: b.lostT,
         time: b.time,
-        wave: { current: b.wave, total: b.field.waves, nextIn: b.nextIn, timer: b.waveTimer, nextSize: b.nextWaveSize, left: b.bugsLeft, bonus: b.earlyBonus, lock: b.wave > 0 ? b.callLock : 0, started: b.waves },
+        endless: b.endless,
+        buff: waveBuff(Math.max(1, b.wave), b.endless),
+        boss: b.boss,
+        bossWave: b.bossWave,
+        wave: { current: b.wave, total: b.endless ? 0 : b.field.waves, nextIn: b.nextIn, timer: b.waveTimer, nextSize: b.nextWaveSize, left: b.bugsLeft, bonus: b.earlyBonus, lock: b.wave > 0 ? b.callLock : 0, started: b.waves },
         won: b.won,
         wonT: b.wonT,
         build: {

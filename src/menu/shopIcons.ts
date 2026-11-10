@@ -4,7 +4,8 @@ import { Pose } from '../characters/rig';
 import { buildingMesh, cruiserMesh } from '../game/buildings';
 import { MARINE_KIT, MARINE_SCALE, aimPose } from '../game/scene';
 import { Mesh3, drawMesh, drawShadow } from '../mesh/mesh';
-import { LIVERY_BLUE, type Livery, siegeTank, walkerMech } from '../mesh/models';
+import { LIVERY_BLUE, siegeTank, walkerMech } from '../mesh/models';
+import { LIVERY_RED } from '../game/livery';
 import { rgb } from '../render/color';
 import { Projection } from '../render/projection';
 import { Projector } from '../render/projector';
@@ -26,16 +27,6 @@ export type ShopIcon = 'marine' | 'ammo' | 'barracks' | 'mech' | 'cruiser' | 'li
 /** 图标的缓冲尺寸（CSS 里放大两倍显示）。 */
 const ICON_W = 64;
 const ICON_H = 36;
-
-/** 红黑涂装：深灰的车体、猩红的装甲板、发红光的灯。 */
-const LIVERY_RED: Livery = {
-  base: rgb(70, 72, 80),
-  panel: rgb(196, 40, 40),
-  dark: rgb(22, 22, 26),
-  stripeA: rgb(196, 40, 40),
-  stripeB: rgb(18, 18, 22),
-  glow: rgb(255, 120, 90),
-};
 
 /** 弹药箱：军绿色的木箱、两道深色箍、箱盖上的黄字标，上面立着三发铜壳尖头的弹。 */
 function ammoCrate(): Mesh3 {

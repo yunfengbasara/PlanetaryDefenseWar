@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "figures": "esbuild tools/preview.ts --bundle --platform=node --format=esm --outfile=.preview.mjs --log-level=warning && node .preview.mjs"
+    "figures": "esbuild tools/preview.ts --bundle --platform=node --format=esm --outfile=.preview.mjs --log-level=warning && node .preview.mjs",
+    "sim": "esbuild tools/sim.ts --bundle --platform=node --format=esm --outfile=.sim.mjs --log-level=warning && node .sim.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",

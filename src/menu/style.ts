@@ -310,6 +310,11 @@ export const MENU_CSS = `
 .pdw-tag { position: absolute; top: 14px; left: 14px; padding: 1px 6px; font-size: 10px; background: var(--blue); }
 .pdw-btn.buy { height: 30px; font-size: 13px; letter-spacing: 1px; }
 .pdw-btn.buy svg { color: var(--orange); }
+.pdw-btn.buy.owned { color: #8fe08f; }
+.pdw-btn.buy.equipped { color: #ffc446; }
+.pdw-item.owned { border-color: #3a6a3a; }
+.pdw-btn.endless { height: 44px; padding: 0 16px; }
+.pdw-btn.endless small { margin-left: 6px; font-size: 11px; color: var(--muted); }
 .pdw-ach { display: flex; flex-direction: column; gap: 8px; }
 .pdw-ach-row {
   display: flex; align-items: center; gap: 12px; padding: 10px 12px;
@@ -419,6 +424,20 @@ export const MENU_CSS = `
   color: #ffe2a8; background: rgba(40, 26, 6, .7); border: 1px solid rgba(240, 150, 58, .7);
 }
 .pdw-banner em svg { width: 14px; height: 14px; color: var(--orange); }
+.pdw-banner em.boss { color: #ff8a6a; }
+.pdw-wave-buff { margin-top: 4px; font: 700 11px Consolas, "Microsoft YaHei", monospace; color: #ff8a6a; letter-spacing: .5px; }
+.pdw-wave-buff.hidden { display: none; }
+.pdw-bossbar {
+  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); width: min(420px, 40%);
+  padding: 6px 10px 8px; background: rgba(12, 8, 14, .82); border: 2px solid #5a1a22; pointer-events: none; z-index: 5;
+}
+.pdw-bossbar.hidden { display: none; }
+.pdw-bossbar-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+.pdw-bossbar-head small { font: 700 10px Consolas, monospace; letter-spacing: 3px; color: #ff6a5a; }
+.pdw-bossbar-head b { font-size: 14px; letter-spacing: 2px; color: #fff; }
+.pdw-bossbar-head em { margin-left: auto; font: 700 12px Consolas, monospace; font-style: normal; color: #ffc446; }
+.pdw-bossbar-track { height: 8px; background: #2a1418; border: 1px solid #000; }
+.pdw-bossbar-track i { display: block; height: 100%; background: linear-gradient(180deg, #ff7a5a, #c8283a); transition: width .15s linear; }
 .pdw-banner.show { animation: pdw-banner 2.2s ease-out forwards; }
 @keyframes pdw-banner {
   0% { opacity: 0; transform: translate(-50%, -8px) scale(1.2); }

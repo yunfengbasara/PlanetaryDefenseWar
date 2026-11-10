@@ -17,7 +17,7 @@ import { AIRSTRIKE_COST, BUILDS, CRUISER_COST, CRUISER_ID, CRUISER_RANGE, type B
 import { CROSS_C, PLAT, crossBlocks, crossClamp, crossRampTops, crossRowSpan, crossSpawn, crossWalkable } from './crossmap';
 import { PlatformGround } from './ground';
 import { type FieldDef, field } from './fields';
-import { BUG_LOOKS, BUG_SIZE, type BugKind, type BugLook, type SplatBlob, drawBug, drawSplat, makeSplat } from './bugs';
+import { BUG_LOOKS, BUG_SIZE, type BugKind, type BugLook, type SplatBlob, drawBug, drawSplat, makeSplat, rankLook } from './bugs';
 
 /**
  * 行星防卫战的战场：一条悬在深空里的金属平台，虫群从上方顺着通道涌下来。
@@ -72,6 +72,25 @@ export const MARINE_KIT: Kit = {
 export const MARINE_SCALE = 1.18;
 /** 机枪兵的血量、各种伤害。 */
 const MARINE_HP = 30;
+/**
+ * 机枪兵：一发打多少、两个点射之间停多久（秒，再乘 FIRE_PAUSE、除以射速升级）。原来一发 1、停 0.6~1.1 秒，
+ * 兵营又是最便宜的火力，升满以后一座兵营顶得上好几门炮 —— 所以一发降到 0.8、停顿拉长到 0.8~1.3，
+ * 兵营的攻击力 / 射速升级线也比别的建筑平（buildings.ts 的 DMG_SOFT / RATE_SOFT）。
+ */
+const RIFLE_DMG = 0.8;
+const RIFLE_PAUSE_MIN = 0.8;
+const RIFLE_PAUSE_SPAN = 0.5;
+
+/** 商城买下的永久强化（menu/data.ts 按存档算出来，开局传进来）。都是倍率或加数，1 / 0 = 没买。 */
+export interface Perks {
+  /** 机枪兵生命倍率、步枪伤害倍率、兵营造兵少几秒、机甲每轮多发几枚导弹、巨舰主炮冷却倍率。 */
+  marineHp: number;
+  rifleDmg: number;
+  draftTime: number;
+  missiles: number;
+  cruiserCd: number;
+}
+export const NO_PERKS: Perks = { marineHp: 1, rifleDmg: 1, draftTime: 0, missiles: 0, cruiserCd: 1 };
 /** 建造模式：机甲的血量（建筑的血量在 buildings.ts）。 */
 const MECH_HP = 60;
 
@@ -212,6 +231,68 @@ const LATE_KILL_MULT = 1.2;
 const FIRE_PAUSE = 0.8;
 /** 每种虫被打死给多少晶矿（原价）。 */
 const KILL_REWARD: Record<BugKind, number> = { crawler: 1, hopper: 2, beetle: 5, flyer: 3, serpent: 6, spitter: 4 };
+/** 普通虫的血量。喷酸虫是脆皮（一发就倒），靠躲在后面远程吐酸。 */
+const BASE_HP: Record<BugKind, number> = { crawler: 1, hopper: 1, beetle: 5, flyer: 1, serpent: 4, spitter: 1 };
+
+/**
+ * 精英怪和 Boss（rank 1 / 2）：同一种虫放大一圈、换一身暗红的甲壳，血厚、带防御，打人更疼，头顶有血条。
+ *
+ *   精英   第 ELITE_FROM 波起每波混进几只（eliteCount，替掉同样只数的普通虫）。血 = 原血 × 10 + 10，防御 0.5，体型 ×1.6
+ *   Boss   每 BOSS_EVERY 波来一只（最后一波也来），甲虫或刺蛇。血见 bossHp，防御 1，体型 ×2.8，走得慢、咬得很疼；
+ *          HUD 上方单独一条血条。打死给一大笔晶矿和信用点
+ *
+ * 防御是"每一下扣掉多少"：伤害先减防御，最少保留 ARMOR_FLOOR —— 机枪这种一发伤害小的打重甲很吃亏，
+ * 炮弹、爆炸（一下 10 点起）几乎不受影响。所以 Boss 要靠坦克、机甲和巨舰啃。
+ * Boss 血量、精英只数再乘地图的 waveScale（最多 ×1，新兵训练场的 Boss 只有一半血）。
+ */
+export type Rank = 0 | 1 | 2;
+const RANKS: { scale: number; armor: number; dmg: number; speed: number; reward: number }[] = [
+  { scale: 1, armor: 0, dmg: 1, speed: 1, reward: 1 },
+  { scale: 1.6, armor: 0.5, dmg: 2.5, speed: 0.85, reward: 8 },
+  { scale: 2.8, armor: 1, dmg: 6, speed: 0.8, reward: 0 },
+];
+const ELITE_FROM = 6;
+const eliteCount = (n: number, scale: number): number => (n < ELITE_FROM ? 0 : Math.round((1 + (n - ELITE_FROM) / 3) * Math.min(1, scale)));
+const eliteHp = (kind: BugKind): number => BASE_HP[kind] * 10 + 10;
+const BOSS_EVERY = 5;
+const bossHp = (n: number): number => 300 + 50 * n;
+const BOSS_REWARD = 150;
+const BOSS_CREDITS = { min: 15, max: 30 };
+const ARMOR_FLOOR = 0.25;
+export const BOSS_NAME: Partial<Record<BugKind, string>> = { beetle: '巨型甲虫', serpent: '刺蛇女王' };
+
+/**
+ * 无尽模式：波次不封顶，打到核心碎掉为止。前 ENDLESS_FROM 波和普通模式一样，之后在波次成长之上每一波虫的血量再 ×ENDLESS_HP（复利）、防御再 +ENDLESS_ARMOR
+ * （连同波次成长一共：第 20 波血 ×3.5、防御 0.7，第 30 波血 ×7.9、防御 1.3，第 40 波血 ×17、防御 1.9），攻击力 ×ENDLESS_DMG（第 30 波 ×2.7）；
+ * 每波只数到第 ENDLESS_SIZE_CAP 波以后只按 ENDLESS_SIZE_STEP 线性加（不然几十波以后一波几千只，全堵在画面外排队），
+ * 难度主要靠血量和防御往上顶。精英、Boss 照常来，第 ENDLESS_TWIN_BOSS 波起一次来两只 Boss。
+ */
+/**
+ * 波次成长（普通模式和无尽模式都有）：从第 2 波起每波虫的血量 +WAVE_HP（线性，第 15 波 ×1.7、第 30 波 ×2.45），
+ * 从第 WAVE_ARMOR_FROM 波起每波防御 +WAVE_ARMOR（第 15 波 0.2、第 30 波 0.5）。精英、Boss 也乘这个。
+ * 原来虫的血量从头到尾不变，后期升满的防线一枪一只，自动玩家打每张图核心都是满血。
+ */
+const WAVE_HP = 0.05;
+const WAVE_ARMOR = 0.02;
+const WAVE_ARMOR_FROM = 5;
+const waveHpMul = (n: number): number => 1 + WAVE_HP * Math.max(0, n - 1);
+const waveArmor = (n: number): number => WAVE_ARMOR * Math.max(0, n - WAVE_ARMOR_FROM);
+const ENDLESS_FROM = 10;
+const ENDLESS_HP = 1.06;
+const ENDLESS_ARMOR = 0.04;
+const ENDLESS_DMG = 1.05;
+const ENDLESS_SIZE_CAP = 25;
+const ENDLESS_SIZE_STEP = 15;
+const ENDLESS_TWIN_BOSS = 30;
+const endlessHpMul = (n: number): number => ENDLESS_HP ** Math.max(0, n - ENDLESS_FROM);
+const endlessArmor = (n: number): number => ENDLESS_ARMOR * Math.max(0, n - ENDLESS_FROM);
+/** 第 n 波的虫一共强化多少：血量倍率、防御（波次成长，无尽模式再叠上无尽加成）。HUD 也显示这个。 */
+export const waveBuff = (n: number, endless: boolean): { hp: number; armor: number } => ({
+  hp: waveHpMul(n) * (endless ? endlessHpMul(n) : 1),
+  armor: waveArmor(n) + (endless ? endlessArmor(n) : 0),
+});
+/** 无尽模式里虫的攻击力也跟着涨（不然后面的虫只是血厚的沙包，咬一口还是 1，防线永远不会崩）。 */
+export const endlessDmgMul = (n: number): number => ENDLESS_DMG ** Math.max(0, n - ENDLESS_FROM);
 /**
  * 信用点（跨局保存）：打死虫子有一定概率掉一点（chance 概率，掉 min..max 点），越难打的虫越容易掉、掉得越多；
  * 每突破 CREDIT_MILESTONE 波再发一笔，越往后越多，也带一点随机。
@@ -296,6 +377,16 @@ interface HitNum {
 
 interface Bug {
   hit?: HitNum;
+  /** 0 普通、1 精英、2 Boss；体型倍率；满血；防御（每一下先减掉这么多，最少留 ARMOR_FLOOR）；什么时候刷出来的。 */
+  rank: Rank;
+  scale: number;
+  maxHp: number;
+  armor: number;
+  /** 攻击力倍率（精英 / Boss、无尽模式的波次加成）。 */
+  power: number;
+  born: number;
+  /** 第一次挨打是什么时候（-1 = 还没挨过；统计 Boss 被啃了多久用）。 */
+  struck: number;
   /** 这一帧已经有多少火力对准了它（各守军下一轮大概能打出的伤害加起来），挑目标时用来分散火力。 */
   aimed: number;
   kind: BugKind;
@@ -359,6 +450,8 @@ interface Spike {
   h: number;
   /** 同一次砸地刺出来的这一串共用：已经被扎过的目标（一次砸地每个目标只挨一下）。 */
   hit: Set<unknown>;
+  /** 扎一下扣多少（精英 / Boss 更疼）。 */
+  dmg: number;
 }
 
 /** 酸液弹。 */
@@ -367,6 +460,7 @@ interface Glob {
   to: Vec3;
   t: number;
   dur: number;
+  dmg: number;
 }
 
 interface Defender {
@@ -763,6 +857,8 @@ export class DefenseScene {
   wonT = 0;
   /** 上一波来了多久（提前叫下一波的冷却用）。 */
   private sinceLaunch = 0;
+  /** 统计（自动玩家 tools/sim.ts 用）：各种守军一共打了多少伤害、每只 Boss 从第一次挨打到被打死用了几秒。 */
+  readonly stats = { dmg: {} as Record<string, number>, bossTimes: [] as number[] };
 
   /** 十字高地：虫从四个方向来，没有"防线"那一行；几何在 crossmap.ts。 */
   readonly cross: boolean = this.field.layout === 'cross';
@@ -772,7 +868,9 @@ export class DefenseScene {
   wave = 0;
   nextIn = WAVE_PREP;
   /** 每一波还没涌出来的虫：剩几只、每秒涌几只、攒着的零头。 */
-  private readonly streams: { left: number; rate: number; acc: number }[] = [];
+  private readonly streams: { left: number; rate: number; acc: number; elite: number }[] = [];
+  /** 最近一次来 Boss 是第几波（HUD 跟着"第 N 波来袭"一起提示）。 */
+  bossWave = 0;
   readonly structures: Structure[] = [];
   ghost: Ghost | null = null;
   /** 当前选中（弹着升级面板）的建筑。 */
@@ -784,7 +882,13 @@ export class DefenseScene {
   /**
    * 开局：地图是空的，只有水晶核心和一笔晶矿；玩家自己造兵营、车间、坦克、火炮，买巨舰、叫轰炸。
    */
-  constructor() {
+  /** 商城强化；无尽模式（波次不封顶，每一波虫的血量和防御往上涨，打到核心碎掉为止）。 */
+  readonly perks: Perks;
+  readonly endless: boolean;
+
+  constructor(opts: { endless?: boolean; perks?: Perks } = {}) {
+    this.perks = opts.perks ?? NO_PERKS;
+    this.endless = !!opts.endless;
     this.fx.debrisColors = MOON_DEBRIS;
     this.fx.smokeLift = 45;
     this.crystals = this.field.startCrystals;
@@ -802,14 +906,14 @@ export class DefenseScene {
    * 刷一只虫，刷在画面外面让它自己走进来：单通道地图紧贴画面上边再往上 back（一群一起刷时拉成一串）；
    * 镜头拖到下面去了也最多只刷到地图顶边往里 SPAWN_DEEP 的地方（不会刷到防线跟前）。十字高地在画面边缘外的路上（crossSpawn）。
    */
-  private spawn(back = Math.random() * 34): void {
+  private spawn(back = Math.random() * 34, rank: Rank = 0, force?: BugKind): void {
     const y = Math.min(this.view.t, TOP_Y + SPAWN_DEEP) - 24 - back;
     // 按 mix 抽一种；还没到出场波次的虫不出，刚出场的比例打折。
     const n = Math.max(1, this.wave);
     const weights = this.field.mix.map(([k, w]): [BugKind, number] => [k, w * clamp((n - KIND_FROM[k] + 1) / 3, 0, 1)]);
     let r = Math.random() * weights.reduce((t, [, w]) => t + w, 0);
-    let kind: BugKind = 'crawler';
-    for (const [k, w] of weights) {
+    let kind: BugKind = force ?? 'crawler';
+    for (const [k, w] of force ? [] : weights) {
       if (r < w) {
         kind = k;
         break;
@@ -825,10 +929,21 @@ export class DefenseScene {
       flyer: 26 + Math.random() * 10,
       serpent: 15 + Math.random() * 5,
       spitter: 16 + Math.random() * 6,
-    }[kind] * this.field.rush * waveRush(n);
+    }[kind] * this.field.rush * waveRush(n) * RANKS[rank].speed;
+    const R = RANKS[rank];
+    const scale = Math.min(1, this.field.waveScale);
+    const buff = waveBuff(n, this.endless);
+    const hp = (rank === 2 ? bossHp(n) * scale : rank === 1 ? eliteHp(kind) : BASE_HP[kind]) * buff.hp;
     this.bugs.push({
+      rank,
+      scale: R.scale,
+      maxHp: hp,
+      armor: R.armor + buff.armor,
+      power: R.dmg * (this.endless ? endlessDmgMul(n) : 1),
+      born: this.time,
+      struck: -1,
       kind,
-      look: looks[Math.floor(Math.random() * looks.length)],
+      look: rankLook(looks[Math.floor(Math.random() * looks.length)], rank),
       x: at ? at.x : spanAt(y)[0] + 12 + Math.random() * (spanAt(y)[1] - spanAt(y)[0] - 24),
       y: at ? at.y : y,
       z: 0,
@@ -838,8 +953,7 @@ export class DefenseScene {
       ky: 0,
       speed,
       phase: Math.random(),
-      // 喷酸虫是脆皮（一发就倒），靠躲在后面远程吐酸。
-      hp: kind === 'beetle' ? 5 : kind === 'serpent' ? 4 : 1,
+      hp,
       dead: -1,
       wobble: Math.random() * 10,
       hop: Math.random(),
@@ -893,7 +1007,7 @@ export class DefenseScene {
   /** 一个守军下一轮大概能打出多少伤害（挑目标时记到目标头上）：机枪兵一个点射、机甲一轮连射、火炮一小段。 */
   private claimOf(d: Defender): number {
     const k = this.stat(d.owner, 'dmg');
-    return d.kind === 'rifle' ? 1.5 * k : 13 * k;
+    return d.kind === 'rifle' ? 1.5 * RIFLE_DMG * this.perks.rifleDmg * k : 13 * k;
   }
 
   private claimOfGun(g: Gun): number {
@@ -912,20 +1026,32 @@ export class DefenseScene {
    * 打中一只虫。
    * @param blast 爆炸的冲击（0..1）。有冲击就一定打爆；步枪打死的按体型有一定概率打爆。
    */
-  private hurt(b: Bug, dmg: number, fromX: number, fromY: number, blast: number): void {
+  private hurt(b: Bug, dmg: number, fromX: number, fromY: number, blast: number, src = 'other'): void {
     if (b.dead >= 0) return;
-    const dealt = Math.min(dmg, Math.max(0, b.hp));
-    b.hp -= dmg;
-    this.hitNumber(b, dealt, b.hp <= 0 || blast >= 0.5);
-    if (b.hp > 0 && blast < 0.5) return;
+    // 防御：每一下先减掉 armor，最少留 ARMOR_FLOOR。
+    const eff = b.armor > 0 ? Math.max(dmg * ARMOR_FLOOR, dmg - b.armor) : dmg;
+    const dealt = Math.min(eff, Math.max(0, b.hp));
+    this.stats.dmg[src] = (this.stats.dmg[src] ?? 0) + dealt;
+    b.hp -= eff;
+    if (b.struck < 0) b.struck = this.time;
+    this.hitNumber(b, dealt, b.hp <= 0);
+    if (b.hp > 0) return;
+    if (b.rank === 2) {
+      this.stats.bossTimes.push(this.time - b.struck);
+      this.fx.explode(b.x, b.y, b.z, 2.6);
+      this.shake = Math.max(this.shake, 0.7);
+    }
     if (!this.lost) {
       // 建防期（前 BUILD_WAVES 波）虫少，打一只多给几倍，好在前几波把基本防线搭起来。
       // 倍率会带出零头（×1.2）：零头先攒着，攒满整数再进账，晶矿永远是整数。
-      this.crystalFrac += KILL_REWARD[b.kind] * (this.wave <= BUILD_WAVES ? EARLY_KILL_MULT : LATE_KILL_MULT);
+      const base = b.rank === 2 ? BOSS_REWARD : KILL_REWARD[b.kind] * RANKS[b.rank].reward;
+      this.crystalFrac += base * (this.wave <= BUILD_WAVES ? EARLY_KILL_MULT : LATE_KILL_MULT);
       const whole = Math.floor(this.crystalFrac);
       this.crystals += whole;
       this.crystalFrac -= whole;
-      const drop = CREDIT_DROP[b.kind];
+      // 精英一半概率掉、掉得多一倍；Boss 必掉一大笔。
+      const cd = CREDIT_DROP[b.kind];
+      const drop = b.rank === 2 ? { chance: 1, ...BOSS_CREDITS } : b.rank === 1 ? { chance: 0.5, min: cd.min * 2, max: cd.max * 2 } : cd;
       if (Math.random() < drop.chance) {
         const n = randInt(drop.min, drop.max);
         this.credits += n;
@@ -935,8 +1061,8 @@ export class DefenseScene {
     const dx = b.x - fromX;
     const dy = b.y - fromY;
     const d = Math.hypot(dx, dy) || 1;
-    const size = BUG_SIZE[b.kind];
-    const gib = blast > 0.15 || Math.random() < (b.kind === 'spitter' ? 0.8 : 0.4);
+    const size = BUG_SIZE[b.kind] * b.scale;
+    const gib = b.rank === 2 || blast > 0.15 || Math.random() < (b.kind === 'spitter' ? 0.8 : 0.4);
     // 血迹：方向就是"被从哪边打的"。打爆的那一滩更大、甩得更远。
     this.addSplat({ x: b.x, y: b.y, t: 0, blobs: makeSplat(3 + size * 2.4, dx, dy, gib), blood: b.look.blood });
     if (gib) {
@@ -952,7 +1078,7 @@ export class DefenseScene {
 
   /** 打爆：一把甲壳碎片 + 几块体液，朝"被打的方向"和上方散开。 */
   private shatter(b: Bug, ux: number, uy: number, blast: number): void {
-    const size = BUG_SIZE[b.kind];
+    const size = BUG_SIZE[b.kind] * b.scale;
     const n = Math.round(7 + size * 7);
     const lk = b.look;
     const colors = [lk.shell, lk.shellLight, lk.shellDark, lk.accent, lk.leg, lk.blood[0], lk.blood[1]];
@@ -978,7 +1104,7 @@ export class DefenseScene {
   }
 
   /** power：威力倍率（坦克攻击力升级），炸得更狠、范围更大一点。 */
-  private explode(x: number, y: number, size: number, power = 1): void {
+  private explode(x: number, y: number, size: number, power = 1, src = 'other'): void {
     const z = this.terrain.heightAt(x, y);
     this.fx.explode(x, y, z, size);
     // 金属地板炸不出坑，留一块焦黑。
@@ -988,7 +1114,7 @@ export class DefenseScene {
       // 飞在天上的虫也吃爆炸（守军的攻击不分天上地上）。
       if (b.dead >= 0) continue;
       const d = Math.hypot(b.x - x, b.y - y);
-      if (d < r) this.hurt(b, 10 * power, x, y, 1 - d / r);
+      if (d < r) this.hurt(b, 10 * power, x, y, 1 - d / r, src);
     }
     // 爆炸本身不震镜头：炮弹、导弹满屏都是，每发都震眼睛受不了。只有巨舰主炮、轰炸支援的炸弹
     // 在各自落地的地方另外震一下。
@@ -1039,21 +1165,22 @@ export class DefenseScene {
     if (b.kind === 'aa' && t && t.lift <= 20) {
       if (b.hit && t.dead < 0) {
         this.fx.explode(b.b.x, b.b.y, b.b.z, 0.25);
-        this.hurt(t, b.dmg, b.fromX, b.fromY, 0);
+        this.hurt(t, b.dmg, b.fromX, b.fromY, 0, 'aa');
       } else if (Math.random() < 0.45) this.fx.explode(b.b.x, b.b.y, b.b.z, 0.2);
       return;
     }
     if (b.kind === 'aa') {
       if (b.hit && t && t.dead < 0) {
         this.fx.explode(b.b.x, b.b.y, b.b.z, 0.35);
-        this.hurt(t, 99, t.x, t.y + 10, 0.6);
+        // 普通飞虫一发就炸；精英飞虫按伤害扣（一发顶 4 发打地面的）。
+        this.hurt(t, t.rank ? b.dmg * 4 : 99, t.x, t.y + 10, 0.6, 'aa');
       } else if (Math.random() < 0.45) this.fx.explode(b.b.x, b.b.y, b.b.z, 0.25);
       return;
     }
     if (b.hit && t && t.dead < 0) {
       this.spray(b.b, 4, t.look.blood[1], 50);
       this.spray(b.b, 2, b.color, 60);
-      this.hurt(t, b.dmg, b.fromX, b.fromY, 0);
+      this.hurt(t, b.dmg, b.fromX, b.fromY, 0, b.kind === 'rifle' ? 'rifle' : 'mech');
     } else {
       if (Math.random() < 0.6) this.fx.trail(b.b.x, b.b.y, b.b.z + 1);
       this.spray(b.b, 3, rgb(230, 226, 210), 45);
@@ -1103,7 +1230,7 @@ export class DefenseScene {
     // 波次：倒计时到了就来下一波（最后一波来了就不再倒计时）；每一波剩下的虫按各自的速度从顶边涌出来（场上满了就等一等）。
     if (this.waves && !this.lost && !this.won) {
       this.sinceLaunch += dt;
-      if (this.wave < this.field.waves) {
+      if (this.wave < this.totalWaves) {
         this.nextIn -= dt;
         if (this.nextIn <= 0) this.launchWave();
       }
@@ -1111,9 +1238,12 @@ export class DefenseScene {
       for (const st of this.streams) {
         st.acc = Math.min(st.acc + dt * st.rate, Math.max(2, st.rate));
         while (st.acc >= 1 && st.left > 0 && alive < this.field.maxAlive) {
+          // 这一波还没出来的精英混在里面匀着出。
+          const elite = st.elite > 0 && Math.random() < st.elite / st.left;
+          if (elite) st.elite--;
           st.acc--;
           st.left--;
-          this.spawn();
+          this.spawn(undefined, elite ? 1 : 0);
           alive++;
         }
       }
@@ -1267,14 +1397,14 @@ export class DefenseScene {
         } else d.yaw += clamp(-d.yaw, -dt * 2, dt * 2);
         if (d.burst > 0 && d.cd <= 0 && aligned) {
           d.burst--;
-          d.cd = d.burst > 0 ? 0.08 : ((0.6 + Math.random() * 0.5) * FIRE_PAUSE) / this.stat(d.owner, 'rate');
+          d.cd = d.burst > 0 ? 0.08 : ((RIFLE_PAUSE_MIN + Math.random() * RIFLE_PAUSE_SPAN) * FIRE_PAUSE) / this.stat(d.owner, 'rate');
           const t = d.target;
           if (!t) continue;
           d.recoil = 1;
           const a = this.muzzleOf(d);
           const hit = t.dead < 0 && Math.random() < 0.5;
           const b = hit ? v3(t.x, t.y, t.z + t.lift + 4) : v3(t.x + (Math.random() - 0.5) * 24, t.y - Math.random() * 30, t.z + 1);
-          this.fire('rifle', a, b, t, hit, d.x, d.y, true, this.stat(d.owner, 'dmg'));
+          this.fire('rifle', a, b, t, hit, d.x, d.y, true, RIFLE_DMG * this.perks.rifleDmg * this.stat(d.owner, 'dmg'));
           this.flash(a, 1.3, rgb(200, 240, 255));
         }
         continue;
@@ -1330,9 +1460,9 @@ export class DefenseScene {
         const pool = fl.length ? fl : ground;
         if (pool.length) {
           d.missileCd = ((2.6 + Math.random() * 1.2) * FIRE_PAUSE) / this.stat(d.owner, 'rate');
-          for (let k = 0; k < 4; k++) {
+          for (let k = 0; k < 4 + this.perks.missiles; k++) {
             const t = pool[Math.floor(Math.random() * pool.length)];
-            const from = this.mechPoint(d, 4, (k < 2 ? -7 : 7) + (k % 2 ? 1.2 : -1.2), 43);
+            const from = this.mechPoint(d, 4, (k % 4 < 2 ? -7 : 7) + (k % 2 ? 1.2 : -1.2), 43);
             this.missiles.push({
               x: from.x,
               y: from.y,
@@ -1574,7 +1704,7 @@ export class DefenseScene {
 
   /** 够得着目标了没有（停下来打）。 */
   private engaged(b: Bug): boolean {
-    return !!b.prey && this.foeAlive(b.prey) && this.foeGap(b.prey, b) <= ATTACK[b.kind].range;
+    return !!b.prey && this.foeAlive(b.prey) && this.foeGap(b.prey, b) <= ATTACK[b.kind].range + (b.scale - 1) * 6;
   }
 
   /** 打中一个目标：机枪兵、机甲、建筑、核心各自扣血。 */
@@ -1607,7 +1737,7 @@ export class DefenseScene {
         b.cd = atk.every * (0.85 + Math.random() * 0.3);
         const tx = p.x + (Math.random() - 0.5) * 16;
         const ty = p.y + (Math.random() - 0.5) * 12;
-        this.globs.push({ from: v3(b.x, b.y + 9, ground + 8), to: v3(tx, ty, this.terrain.heightAt(tx, ty)), t: 0, dur: 0.5 + d / 400 });
+        this.globs.push({ from: v3(b.x, b.y + 9 * b.scale, ground + 8 * b.scale), to: v3(tx, ty, this.terrain.heightAt(tx, ty)), t: 0, dur: 0.5 + d / 400, dmg: atk.dmg * b.power });
       }
       return;
     }
@@ -1621,10 +1751,10 @@ export class DefenseScene {
         const uy = dy / d;
         const hit = new Set<unknown>();
         for (let k = 1; k <= 16; k++) {
-          const along = 10 + k * 10;
+          const along = 10 * b.scale + k * 10;
           if (along > d + 14) break;
           const side = Math.sin(k * 1.7) * 3;
-          this.spikes.push({ x: b.x + ux * along - uy * side, y: b.y + uy * along + ux * side, t: -k * 0.05, h: 10 + Math.random() * 6, hit });
+          this.spikes.push({ x: b.x + ux * along - uy * side, y: b.y + uy * along + ux * side, t: -k * 0.05, h: (10 + Math.random() * 6) * Math.sqrt(b.scale), hit, dmg: atk.dmg * b.power });
         }
         this.fx.poof(b.x + ux * 8, b.y + uy * 8, 0, 0.4);
       }
@@ -1636,7 +1766,7 @@ export class DefenseScene {
       b.lunge = 1;
       b.ax = dx / d;
       b.ay = dy / d;
-      this.hitFoe(t, atk.dmg, b.kind);
+      this.hitFoe(t, atk.dmg * b.power, b.kind);
     }
   }
 
@@ -1887,7 +2017,7 @@ export class DefenseScene {
         this.flash(from, 6, rgb(200, 235, 255));
         this.fx.muzzle(from.x, from.y, from.z);
         c.recoil = 1;
-        c.cd = (14 + Math.random() * 4) / this.stat(this.cruiserS, 'rate');
+        c.cd = ((14 + Math.random() * 4) * this.perks.cruiserCd) / this.stat(this.cruiserS, 'rate');
         c.target = null;
         c.lock = null;
       }
@@ -1896,7 +2026,7 @@ export class DefenseScene {
       const b = this.bolts[i];
       b.t += dt;
       if (b.t >= b.dur) {
-        this.explode(b.to.x, b.to.y, 1.9, b.power);
+        this.explode(b.to.x, b.to.y, 1.9, b.power, 'cruiser');
         this.shake = Math.max(this.shake, 0.6);
         // 主炮落点：中心一炸，周围再一圈一圈地连环炸开，和一轮轰炸差不多。
         for (let k = 0; k < 7; k++) {
@@ -1911,7 +2041,7 @@ export class DefenseScene {
       const b = this.blasts[i];
       b.t -= dt;
       if (b.t <= 0) {
-        this.explode(b.x, b.y, b.size, b.power);
+        this.explode(b.x, b.y, b.size, b.power, 'cruiser');
         this.blasts.splice(i, 1);
       }
     }
@@ -1966,13 +2096,44 @@ export class DefenseScene {
 
   /** 最后一波来了、虫全清光：通关。 */
   private checkWin(): void {
-    if (this.won || this.lost || !this.waves || this.wave < this.field.waves || this.bugsLeft > 0) return;
+    if (this.won || this.lost || !this.waves || this.wave < this.totalWaves || this.bugsLeft > 0) return;
     this.won = true;
   }
 
   /** 来下一波：波数 +1，这一波的虫排进队列（和场上还没打完的叠在一起），倒计时重新开始。 */
+  /** 一共几波：无尽模式不封顶。 */
+  get totalWaves(): number {
+    return this.endless ? Infinity : this.field.waves;
+  }
+
+  /** 第 n 波多少只（无尽模式过了 ENDLESS_SIZE_CAP 波只线性加）。 */
+  private sizeOf(n: number): number {
+    if (!this.endless) return waveSize(n, this.field.waveScale, this.field.waves);
+    const cap = Math.min(n, ENDLESS_SIZE_CAP);
+    return waveSize(cap, this.field.waveScale, Infinity) + Math.round(ENDLESS_SIZE_STEP * this.field.waveScale * Math.max(0, n - ENDLESS_SIZE_CAP));
+  }
+
+  /** 第 n 波有几只 Boss：每 BOSS_EVERY 波一只，最后一波也有；无尽模式后面一次两只。 */
+  private bossesOf(n: number): number {
+    if (n % BOSS_EVERY !== 0 && (this.endless || n !== this.field.waves)) return 0;
+    return this.endless && n >= ENDLESS_TWIN_BOSS ? 2 : 1;
+  }
+
+  /** Boss 是哪种虫：甲虫和刺蛇轮流（这张图没有刺蛇就一直是甲虫）。 */
+  private bossKind(n: number): BugKind {
+    const serpent = this.field.mix.some(([k]) => k === 'serpent');
+    return serpent && Math.floor(n / BOSS_EVERY) % 2 === 0 ? 'serpent' : 'beetle';
+  }
+
+  /** 场上血最多的那只 Boss（HUD 顶上的血条）。 */
+  get boss(): { name: string; hp: number; max: number } | null {
+    let best: Bug | null = null;
+    for (const b of this.bugs) if (b.rank === 2 && b.dead < 0 && (!best || b.hp > best.hp)) best = b;
+    return best ? { name: BOSS_NAME[best.kind] ?? '虫群首领', hp: best.hp, max: best.maxHp } : null;
+  }
+
   private launchWave(): void {
-    if (this.wave >= this.field.waves) return;
+    if (this.wave >= this.totalWaves) return;
     // 上一波撑过去了：每突破 CREDIT_MILESTONE 波发一笔信用点。
     if (this.wave > 0 && this.wave % CREDIT_MILESTONE === 0) {
       const k = this.wave / CREDIT_MILESTONE;
@@ -1981,8 +2142,9 @@ export class DefenseScene {
       this.milestone = { wave: this.wave, amount };
     }
     this.wave++;
-    const size = waveSize(this.wave, this.field.waveScale, this.field.waves);
-    this.nextIn = this.wave < this.field.waves ? waveGap(this.wave) : 0;
+    const size = this.sizeOf(this.wave);
+    const elites = Math.min(size, eliteCount(this.wave, this.field.waveScale));
+    this.nextIn = this.wave < this.totalWaves ? waveGap(this.wave) : 0;
     this.sinceLaunch = 0;
     // 先冲出来的一群：立刻刷出来（场上装得下多少出多少），在画面外面往外拉成一长串（越多拉得越长），
     // 最前头的马上走进画面，后面的一只接一只跟进来。
@@ -1990,10 +2152,21 @@ export class DefenseScene {
     const n = Math.max(0, Math.min(burst, this.field.maxAlive - this.aliveCount()));
     const len = Math.min(WAVE_STRING_MAX, WAVE_STRING_MIN + n * WAVE_STRING);
     // 分层撒：每只落在自己那一小段里，一串铺得匀。
-    for (let i = 0; i < n; i++) this.spawn((len * (i + Math.random())) / n);
+    // 精英按比例分进这一串和后面涌出来的。
+    let be = Math.min(n, Math.round(elites * (n / size)));
+    const burstElites = be;
+    for (let i = 0; i < n; i++) {
+      const elite = be > 0 && Math.random() < be / (n - i);
+      if (elite) be--;
+      this.spawn((len * (i + Math.random())) / n, elite ? 1 : 0);
+    }
+    // Boss 夹在这一串的中间。
+    const bosses = this.bossesOf(this.wave);
+    for (let i = 0; i < bosses; i++) this.spawn(len * 0.3 + i * 60, 2, this.bossKind(this.wave + i * BOSS_EVERY));
+    if (bosses) this.bossWave = this.wave;
     // 剩下的（加上场上装不下的那部分）在这一波的时间里匀速涌出来。
     const left = size - n;
-    if (left > 0) this.streams.push({ left, rate: (left / (waveGap(this.wave) * STREAM_SPAN)) * this.field.pace, acc: 0 });
+    if (left > 0) this.streams.push({ left, rate: (left / (waveGap(this.wave) * STREAM_SPAN)) * this.field.pace, acc: 0, elite: elites - burstElites });
   }
 
   /** 还没涌出来的虫（所有波加起来）。 */
@@ -2017,17 +2190,17 @@ export class DefenseScene {
 
   /** 下一波有多少只（已经是最后一波就是 0）。 */
   get nextWaveSize(): number {
-    return this.wave < this.field.waves ? waveSize(this.wave + 1, this.field.waveScale, this.field.waves) : 0;
+    return this.wave < this.totalWaves ? this.sizeOf(this.wave + 1) : 0;
   }
 
   /** 现在提前叫下一波能拿多少晶矿（剩下的秒数 × EARLY_BONUS）。 */
   get earlyBonus(): number {
-    return this.waves && !this.lost && this.wave < this.field.waves ? Math.round(Math.max(0, this.nextIn) * EARLY_BONUS) : 0;
+    return this.waves && !this.lost && this.wave < this.totalWaves ? Math.round(Math.max(0, this.nextIn) * EARLY_BONUS) : 0;
   }
 
   /** 提前叫下一波：按剩余倒计时给晶矿，下一波立刻来。返回给了多少晶矿（不能叫就是 -1）。 */
   callNextWave(): number {
-    if (!this.waves || this.lost || this.won || this.wave >= this.field.waves || (this.wave > 0 && this.callLock > 0)) return -1;
+    if (!this.waves || this.lost || this.won || this.wave >= this.totalWaves || (this.wave > 0 && this.callLock > 0)) return -1;
     const bonus = this.earlyBonus;
     this.crystals += bonus;
     this.launchWave();
@@ -2530,6 +2703,12 @@ export class DefenseScene {
   }
 
   /** 建造模式的建筑：兵营出兵、车间出机甲（都是升门、单位走出来、绕开建筑去站位），尸体清理。 */
+  /** 出兵类造一个要几秒（兵营吃商城的"快速征召"）。 */
+  buildTime(kind: BuildKind): number {
+    const t = BUILDS[kind].time ?? 1;
+    return kind === 'barracks' ? Math.max(1, t - this.perks.draftTime) : t;
+  }
+
   private updateStructures(dt: number): void {
     for (const s of [...this.structures]) {
       s.flash = Math.max(0, s.flash - dt * 1.5);
@@ -2539,7 +2718,7 @@ export class DefenseScene {
       if (!count || !d.time) continue;
       const cap = count.values[s.up.count - 1];
       if (!s.exitReady && this.unitCount(s) < cap) {
-        s.prog += (dt / d.time) * this.stat(s, 'speed');
+        s.prog += (dt / this.buildTime(s.kind)) * this.stat(s, 'speed');
         if (s.prog >= 1) {
           s.prog = 1;
           s.exitReady = true;
@@ -2558,6 +2737,7 @@ export class DefenseScene {
         if (s.kind === 'barracks') {
           const spot = this.formationSpot(s);
           const unit = makeDefender('rifle', doorX, sill);
+          unit.hp = MARINE_HP * this.perks.marineHp;
           unit.owner = s;
           unit.slotX = spot.x;
           unit.slotY = spot.y;
@@ -2728,8 +2908,8 @@ export class DefenseScene {
       if (d < 6 || m.t > 2.5 || m.z < ground) {
         if (m.target && m.target.kind === 'flyer' && m.target.dead < 0 && d < 12) {
           this.fx.explode(m.x, m.y, m.z, 0.5);
-          this.hurt(m.target, 99, m.x, m.y + 10, 0.7);
-        } else if (m.z - ground < 15) this.explode(m.x, m.y, 0.55, m.power);
+          this.hurt(m.target, m.target.rank ? 8 * m.power : 99, m.x, m.y + 10, 0.7, 'missile');
+        } else if (m.z - ground < 15) this.explode(m.x, m.y, 0.55, m.power, 'missile');
         else this.fx.explode(m.x, m.y, m.z, 0.4);
         this.missiles.splice(i, 1);
       }
@@ -2743,7 +2923,7 @@ export class DefenseScene {
         this.fx.trail(p.x, p.y, p.z);
       }
       if (s.t >= s.dur) {
-        this.explode(s.to.x, s.to.y, s.size, s.power ?? 1);
+        this.explode(s.to.x, s.to.y, s.size, s.power ?? 1, 'tank');
         this.shells.splice(i, 1);
       }
     }
@@ -2765,7 +2945,7 @@ export class DefenseScene {
       b.y += b.vy * dt;
       b.z += b.vz * dt;
       if (b.z <= this.terrain.heightAt(b.x, b.y)) {
-        this.explode(b.x, b.y, 1.2);
+        this.explode(b.x, b.y, 1.2, 1, 'airstrike');
         this.shake = Math.max(this.shake, 0.32);
         this.bombs.splice(i, 1);
       }
@@ -2778,7 +2958,7 @@ export class DefenseScene {
       if (g.t >= g.dur) {
         this.addSplat({ x: g.to.x, y: g.to.y, t: 0, blobs: makeSplat(5, 0, 1, true), blood: [rgb(110, 200, 40), rgb(220, 255, 120)] });
         this.fx.poof(g.to.x, g.to.y, g.to.z, 0.8);
-        this.splashFoes(g.to.x, g.to.y, SPLASH, ATTACK.spitter.dmg, 'acid');
+        this.splashFoes(g.to.x, g.to.y, SPLASH, g.dmg, 'acid');
         this.globs.splice(i, 1);
       }
     }
@@ -2788,7 +2968,7 @@ export class DefenseScene {
       s.t += dt;
       if (before < 0 && s.t >= 0) {
         this.fx.poof(s.x, s.y, this.terrain.heightAt(s.x, s.y), 0.5);
-        this.splashFoes(s.x, s.y, 5, ATTACK.serpent.dmg, 'spike', s.hit);
+        this.splashFoes(s.x, s.y, 5, s.dmg, 'spike', s.hit);
       }
       if (s.t > 0.7) this.spikes.splice(i, 1);
     }
@@ -2874,7 +3054,7 @@ export class DefenseScene {
       h.kill ||= kill;
       return;
     }
-    const top = b.z + b.lift + 6 + BUG_SIZE[b.kind] * 5;
+    const top = b.z + b.lift + 6 + BUG_SIZE[b.kind] * 5 * b.scale;
     const o: HitNum = { x: b.x + (Math.random() - 0.5) * 6, y: b.y, z: top, t: 0, n: dealt, kill };
     b.hit = o;
     this.hits.push(o);
@@ -3218,14 +3398,15 @@ export class DefenseScene {
       // 近战扑咬：身子往目标那边冲一小下。
       const lk = Math.sin(b.lunge * Math.PI) * 4;
       const root = cam.worldToScreenZ(b.x + b.ax * lk, b.y + b.ay * lk, b.z + b.lift);
-      if (root.x < -30 || root.x > cam.viewWidth + 30 || root.y < -60 || root.y > cam.viewHeight + 30) continue;
+      const m = 30 * b.scale;
+      if (root.x < -m || root.x > cam.viewWidth + m || root.y < -2 * m || root.y > cam.viewHeight + m) continue;
       if (b.lift > 2) {
         const sh = cam.worldToScreenZ(b.x, b.y, b.z);
-        const r = 3.5 * BUG_SIZE[b.kind] * g;
+        const r = 3.5 * BUG_SIZE[b.kind] * b.scale * g;
         ground.ellipse(sh, r, r * Projection.groundSquash, 0, rgba(0, 0, 0, 55), 1e6 + 900);
       }
       const row = cam.worldToScreen(b.x, b.y).y;
-      const p = new Projector(root, Math.PI / 2, Projection.groundSquash, g, b.lift > 20 ? row + 4000 : row);
+      const p = new Projector(root, Math.PI / 2, Projection.groundSquash, g * b.scale, b.lift > 20 ? row + 4000 : row);
       drawBug(units, p, b.kind, b.look, { phase: b.phase, dead: b.dead, airborne: b.kind === 'hopper' && b.lift > 1, emerge: b.emerge, spit: b.spit }, this.time);
     }
 
@@ -3269,9 +3450,14 @@ export class DefenseScene {
         drawMesh(units, cam, m, v2(d.x, d.y));
       } else if (d.deadT < CORPSE_TIME) figure(d.pose, d.x, d.y, d.z, d.yaw);
     }
-    // 血条：头顶一排小方块。机枪兵 5 格（走在路上的新兵也带着），建造模式的机甲 8 格。
+    // 血条：头顶一排小方块。机枪兵 5 格（走在路上的新兵也带着），建造模式的机甲 8 格；精英 6 格、Boss 14 格。
+    for (const b of this.bugs) {
+      if (b.rank === 0 || b.dead >= 0) continue;
+      const top = b.z + b.lift + (b.kind === 'serpent' ? 24 : 12) * BUG_SIZE[b.kind] * b.scale * 0.75;
+      this.hpBar(fx, cam, cam.worldToScreenZ(b.x, b.y, top), b.hp / b.maxHp, b.rank === 2 ? 14 : 6);
+    }
     for (const d of this.defenders) {
-      if (d.kind === 'rifle' && d.deadT < 0) this.hpBar(fx, cam, cam.worldToScreenZ(d.x, d.y, d.z + 27), d.hp / MARINE_HP, HP_PIPS);
+      if (d.kind === 'rifle' && d.deadT < 0) this.hpBar(fx, cam, cam.worldToScreenZ(d.x, d.y, d.z + 27), d.hp / (MARINE_HP * this.perks.marineHp), HP_PIPS);
       if (d.kind === 'mech') this.hpBar(fx, cam, cam.worldToScreenZ(d.x, d.y, d.z + 54), d.hp / MECH_HP, 8);
     }
 

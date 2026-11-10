@@ -60,6 +60,24 @@ export const BUG_LOOKS: Record<BugKind, BugLook[]> = {
   spitter: [look(rgb(96, 110, 60), rgb(190, 250, 90), ACID)],
 };
 
+/**
+ * 精英 / Boss 的配色：同一种虫，甲壳往暗红里压、饰色换成发亮的橙红（Boss 再深一点、饰色偏金），
+ * 一眼就能从虫潮里认出来。体液颜色不变。算一次缓存起来。
+ */
+const rankCache = new Map<BugLook, BugLook[]>();
+export function rankLook(base: BugLook, rank: number): BugLook {
+  if (rank <= 0) return base;
+  let pair = rankCache.get(base);
+  if (!pair) {
+    pair = [
+      look(lerpColor(base.shell, rgb(170, 36, 30), 0.6), rgb(255, 110, 50), base.blood),
+      look(lerpColor(base.shell, rgb(150, 18, 28), 0.75), rgb(255, 210, 60), base.blood),
+    ];
+    rankCache.set(base, pair);
+  }
+  return pair[Math.min(rank, 2) - 1];
+}
+
 export const BUG_SIZE: Record<BugKind, number> = { crawler: 1, beetle: 1.9, flyer: 0.9, hopper: 1.05, serpent: 1.4, spitter: 1.4 };
 
 /** 一个两档的"球"：暗底 + 往左上偏的亮面。 */

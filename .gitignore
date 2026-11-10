@@ -16,6 +16,7 @@ dist/
 # 离线出图（npm run figures 生成）
 .preview*.png
 .preview.mjs
+.sim.mjs
 
 # 本地环境 / 密钥
 *.local

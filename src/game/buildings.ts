@@ -65,6 +65,12 @@ const tier = (cost: number): number[] => [0.6, 1.2, 2.4].map((k) => Math.round((
 const DMG = (cost: number): StatDef => ({ key: 'dmg', name: '攻击力', values: [1, 1.5, 2.2, 4], costs: tier(cost) });
 const RANGE = (cost: number): StatDef => ({ key: 'range', name: '射程', values: [1, 1.1, 1.2, 1.45], costs: tier(cost * 0.8) });
 const RATE = (cost: number): StatDef => ({ key: 'rate', name: '射速', values: [1, 1.4, 1.9, 3.2], costs: tier(cost) });
+/**
+ * 兵营的攻击力 / 射速线比别的建筑平：兵营本来就是最便宜的火力，升满还按 ×4 × ×3.2 叠乘，一座顶好几门炮。
+ *   攻击力 ×1 → 1.4 → 1.9 →（突破）3，射速 ×1 → 1.3 → 1.65 →（突破）2.5
+ */
+const DMG_SOFT = (cost: number): StatDef => ({ key: 'dmg', name: '攻击力', values: [1, 1.4, 1.9, 3], costs: tier(cost) });
+const RATE_SOFT = (cost: number): StatDef => ({ key: 'rate', name: '射速', values: [1, 1.3, 1.65, 2.5], costs: tier(cost) });
 /** 生产速度：造一个单位的时间除以这个倍率。 */
 const SPEED = (cost: number): StatDef => ({ key: 'speed', name: '生产速度', values: [1, 1.25, 1.55, 2.4], costs: tier(cost * 0.8) });
 
@@ -80,7 +86,7 @@ export const BUILDS: Record<BuildKind, BuildDef> = {
     top: 38,
     time: 4,
     unit: '士兵',
-    stats: [{ key: 'count', name: '士兵数量', values: [5, 7, 9, 14], costs: [200, 400, 800] }, SPEED(150), DMG(150), RANGE(150), RATE(150)],
+    stats: [{ key: 'count', name: '士兵数量', values: [5, 7, 9, 14], costs: [200, 400, 800] }, SPEED(150), DMG_SOFT(150), RANGE(150), RATE_SOFT(150)],
   },
   factory: {
     kind: 'factory',

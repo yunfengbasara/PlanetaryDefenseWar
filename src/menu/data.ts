@@ -1,5 +1,6 @@
 import type { BugKind } from '../game/bugs';
 import { FIELDS, type FieldDef } from '../game/fields';
+import type { Perks } from '../game/scene';
 import { save } from '../save';
 import type { GuideStep } from './hints';
 
@@ -197,15 +198,29 @@ export const MAPS: MapInfo[] = [
   },
 ];
 
-/** 商城（只有样子）：icon 是图标画哪个模型（menu/shopIcons.ts）。 */
+/**
+ * 商城：花信用点买永久强化，买一次一直有效（存档 owned）。icon 是图标画哪个模型（menu/shopIcons.ts）。
+ * 效果在 currentPerks() 里折算成战场的 Perks，开局传进 DefenseScene；涂装买下后在商城里随时换。
+ */
 export const SHOP_ITEMS = [
-  { icon: 'marine' as const, name: '强化装甲', desc: '机枪兵生命 +20%', price: 800, tag: '守军' },
-  { icon: 'ammo' as const, name: '穿甲弹匣', desc: '步枪伤害 +15%', price: 1200, tag: '火力' },
-  { icon: 'barracks' as const, name: '快速征召', desc: '兵营造兵时间 -1 秒', price: 1500, tag: '后勤' },
-  { icon: 'mech' as const, name: '导弹巢扩容', desc: '机甲每轮多发 2 枚导弹', price: 2000, tag: '机甲' },
-  { icon: 'cruiser' as const, name: '主炮校准', desc: '战列巡航舰冷却 -20%', price: 2600, tag: '舰队' },
-  { icon: 'livery' as const, name: '涂装：猩红', desc: '全军换上红黑涂装', price: 3000, tag: '外观' },
+  { id: 'armor', icon: 'marine' as const, name: '强化装甲', desc: '机枪兵生命 +20%', price: 800, tag: '守军' },
+  { id: 'ammo', icon: 'ammo' as const, name: '穿甲弹匣', desc: '步枪伤害 +15%', price: 1200, tag: '火力' },
+  { id: 'draft', icon: 'barracks' as const, name: '快速征召', desc: '兵营造兵时间 -1 秒', price: 1500, tag: '后勤' },
+  { id: 'missiles', icon: 'mech' as const, name: '导弹巢扩容', desc: '机甲每轮多发 2 枚导弹', price: 2000, tag: '机甲' },
+  { id: 'cannon', icon: 'cruiser' as const, name: '主炮校准', desc: '战列巡航舰冷却 -20%', price: 2600, tag: '舰队' },
+  { id: 'livery-red', icon: 'livery' as const, name: '涂装：猩红', desc: '全军换上红黑涂装', price: 3000, tag: '外观' },
 ];
+
+/** 按存档里买过的东西算出这一局的强化。 */
+export function currentPerks(): Perks {
+  return {
+    marineHp: save.owns('armor') ? 1.2 : 1,
+    rifleDmg: save.owns('ammo') ? 1.15 : 1,
+    draftTime: save.owns('draft') ? 1 : 0,
+    missiles: save.owns('missiles') ? 2 : 0,
+    cruiserCd: save.owns('cannon') ? 0.8 : 1,
+  };
+}
 
 /** 成就：目前只有展示，进度还没接上统计，全部从 0 开始。 */
 export const ACHIEVEMENTS = [
