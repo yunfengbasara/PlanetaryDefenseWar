@@ -64,7 +64,7 @@ export interface BuildDef {
  *   射速      ×1 → 1.4 → 1.9 →（突破）3.2
  *   射程      ×1 → 1.1 → 1.2 →（突破）1.45   射程加太多会让炮台在后方就把虫清光，所以加得最少
  *   生产速度  ×1 → 1.25 → 1.55 →（突破）2.4
- *   人数      兵营 5 → 7 → 9 →（突破）14，车间 1 → 2 → 3 →（突破）5
+ *   人数      兵营 3 → 4 → 5 → 7，车间 1 → 2 → 3 → 4（原来 5 / 7 / 9 / 14、1 / 2 / 3 / 5：人多导致步兵、机甲的群攻太强）
  *
  * 价钱按建筑造价走：第 2、3、4 级分别是造价的 0.6、1.2、2.4 倍（每级翻一倍），取整到 10。
  * 数量线单独写在各建筑里。
@@ -94,7 +94,7 @@ export const BUILDS: Record<BuildKind, BuildDef> = {
     top: 38,
     time: 4,
     unit: '士兵',
-    stats: [{ key: 'count', name: '士兵数量', values: [5, 7, 9, 14], costs: [200, 400, 800] }, SPEED(150), DMG_SOFT(150), RANGE(150), RATE_SOFT(150)],
+    stats: [{ key: 'count', name: '士兵数量', values: [3, 4, 5, 7], costs: [200, 400, 800] }, SPEED(150), DMG_SOFT(150), RANGE(150), RATE_SOFT(150)],
   },
   factory: {
     kind: 'factory',
@@ -105,9 +105,9 @@ export const BUILDS: Record<BuildKind, BuildDef> = {
     w: 84,
     h: 80,
     top: 56,
-    time: 10,
+    time: 14,
     unit: '机甲',
-    stats: [{ key: 'count', name: '机甲数量', values: [1, 2, 3, 5], costs: [400, 800, 1600] }, SPEED(300), DMG(300), RANGE(300), RATE(300)],
+    stats: [{ key: 'count', name: '机甲数量', values: [1, 2, 3, 4], costs: [400, 800, 1600] }, SPEED(300), DMG(300), RANGE(300), RATE(300)],
   },
   tank: {
     kind: 'tank',

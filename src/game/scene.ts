@@ -48,26 +48,40 @@ const RIFLE_RANGE = 210;
 /** 机甲：比步兵打得远、扇面宽、射速快；肩上导弹巢专打飞虫。 */
 const MECH_RANGE = 300;
 /**
- * 机甲的火力：机炮一发多少、导弹落地爆炸的伤害倍数（爆炸本身一下 10，导弹只吃 MECH_MISSILE_K）、两轮导弹之间隔多久（秒，再乘 FIRE_PAUSE、除以射速）。
- * 原来机炮一发 2、导弹满额 10、隔 2.6~3.8 秒：一台机甲约 58 点秒伤（其中导弹的范围爆炸占了八成），300 晶矿一台，
- * 每晶矿的火力是兵营的四五倍、坦克的两倍。现在约 35（-40%）。
+ * 兵种分工：机枪兵是便宜的前排（单体、人少）；机甲是中程持续输出，导弹带一点群攻；火炮是群攻主力（打地面每发炸开一小片）；
+ * 坦克是打 Boss / 精英的单体重炮（攻击慢、一发很疼、几乎没有溅射）；战列巡航舰平时轰虫堆，Boss 进了射程就锁定 Boss。
+ *
+ * 机甲的火力：机炮一发多少、每轮几枚导弹、导弹落地爆炸的伤害倍数（爆炸本身一下 10）、两轮导弹之间隔多久（秒，再乘 FIRE_PAUSE、除以射速）。
+ * 原来一轮 4 枚、导弹满额 10：导弹的范围爆炸让机甲成了群攻主力，火炮没有用武之地。
  */
 const MECH_CANNON_DMG = 1.6;
-const MECH_MISSILE_K = 0.7;
+/** 机炮一轮连射几发（原来 12）。 */
+const MECH_BURST = 8;
+const MECH_MISSILES = 2;
+const MECH_MISSILE_K = 0.45;
 const MECH_MISSILE_MIN = 3.2;
 const MECH_MISSILE_SPAN = 1.4;
 const MISSILE_RANGE = 360;
 const TANK_RANGE = 330;
+/**
+ * 坦克：一发打中目标那一只扣 TANK_HIT（再乘攻击力），落点周围 TANK_SPLASH_R 以内只溅 10 × TANK_SPLASH_K（很弱）。
+ * 挑目标：Boss > 精英 > 射程里血最多的；炮弹追着目标落（不会因为目标走了几步就打空）。原来是一发 10、半径约 38 的范围伤害、挑虫最密的地方打。
+ */
+const TANK_HIT = 32;
+const TANK_SPLASH_R = 18;
+const TANK_SPLASH_K = 0.3;
 const AA_RANGE = 320;
 /**
- * 火炮（双管速射炮）：专打飞虫，地面是顺带。炮塔最快 AA_TURN 弧度 / 秒（原来 2.2，太灵活），炮管和目标差 AA_AIM 以内才开火；
- * 每 AA_INTERVAL 秒一发（左右炮管交替），一发 AA_DMG，打地面命中率 AA_HIT_GROUND。
+ * 火炮（双管速射炮）：群攻主力，优先打飞虫。炮塔最快 AA_TURN 弧度 / 秒，炮管和目标差 AA_AIM 以内才开火；每 AA_INTERVAL 秒一发（左右炮管交替）。
+ * 打地面：每发落在目标脚下炸开，AA_SPLASH_R 以内的地面虫各扣 AA_SPLASH_DMG（再乘攻击力）。原来打地面只有 40% 命中、没有溅射。
+ * 打飞虫：普通飞虫打中就炸（命中率 18%），精英飞虫按伤害算。
  */
-const AA_TURN = 1.2;
+const AA_TURN = 2;
+const AA_SPLASH_R = 22;
+const AA_SPLASH_DMG = 1.5;
 const AA_AIM = 0.08;
 const AA_INTERVAL = 0.16;
 const AA_DMG = 1;
-const AA_HIT_GROUND = 0.4;
 const AA_TURN_COST = 160;
 const AA_MIN = 50;
 
@@ -84,8 +98,8 @@ export const MARINE_KIT: Kit = {
   shoeDark: rgb(26, 30, 44),
 };
 export const MARINE_SCALE = 1.18;
-/** 机枪兵的血量、各种伤害。 */
-const MARINE_HP = 30;
+/** 机枪兵的血量（人少了，每个兵要更能扛，原来 30）。 */
+const MARINE_HP = 40;
 /**
  * 机枪兵：一发打多少、两个点射之间停多久（秒，再乘 FIRE_PAUSE、除以射速升级）。原来一发 1、停 0.6~1.1 秒，
  * 兵营又是最便宜的火力，升满以后一座兵营顶得上好几门炮 —— 所以一发降到 0.8、停顿拉长到 0.8~1.3，
@@ -191,6 +205,8 @@ export const BUILD_FRONT = LINE_Y + 62;
 const WALK_GAIT = 0.85;
 const WALK_CYCLE = strideCycle(WALK_GAIT) * MARINE_SCALE;
 const CORPSE_TIME = 7;
+/** 巨舰主炮打 Boss 时对 Boss 的伤害倍数（锁定 Boss 的那一轮，中心一炸和周围一圈都算）。 */
+const CRUISER_BOSS_K = 20;
 /** 战列巡航舰比模型原尺寸再大一圈：它得是场上最大的东西。 */
 const CRUISER_SCALE = 1.4;
 
@@ -693,6 +709,8 @@ interface Shell {
   size: number;
   /** 威力倍率（坦克攻击力升级）。 */
   power?: number;
+  /** 坦克：追着打的那一只（落地时直接扣它 TANK_HIT）。 */
+  target?: Bug;
 }
 
 /** 战列巡航舰：停在平台旁边的虚空里，很久才开一炮。 */
@@ -724,8 +742,9 @@ interface Bolt {
   to: Vec3;
   t: number;
   dur: number;
-  /** 威力倍率（巨舰攻击力升级）。 */
+  /** 威力倍率（巨舰攻击力升级）；对 Boss 的伤害倍数（这一轮锁定的是 Boss 才 > 1）。 */
   power: number;
+  bossK: number;
 }
 
 /** 延时的连环爆炸：主炮落点周围一圈接一圈地炸开。 */
@@ -735,6 +754,7 @@ interface Blast {
   t: number;
   size: number;
   power: number;
+  bossK: number;
 }
 
 interface Plane {
@@ -1040,12 +1060,12 @@ export class DefenseScene {
   /** 一个守军下一轮大概能打出多少伤害（挑目标时记到目标头上）：机枪兵一个点射、机甲一轮连射、火炮一小段。 */
   private claimOf(d: Defender): number {
     const k = this.stat(d.owner, 'dmg');
-    return d.kind === 'rifle' ? 1.5 * RIFLE_DMG * k : 6.6 * MECH_CANNON_DMG * k;
+    return d.kind === 'rifle' ? 1.5 * RIFLE_DMG * k : MECH_BURST * 0.55 * MECH_CANNON_DMG * k;
   }
 
   private claimOfGun(g: Gun): number {
     const k = this.stat(g.owner, 'dmg');
-    return g.kind === 'tank' ? 10 * k : 2 * AA_DMG * k;
+    return g.kind === 'tank' ? TANK_HIT * k : 2 * AA_SPLASH_DMG * k;
   }
 
   /** 每帧重新数一遍：每只虫被多少火力对准了。 */
@@ -1141,18 +1161,21 @@ export class DefenseScene {
   }
 
   /** power：威力倍率（坦克攻击力升级），炸得更狠、范围更大一点。 */
-  /** power：威力倍率（攻击力升级），伤害和范围都跟着涨；dmgK 只乘伤害（机甲导弹的爆炸打得轻一些）。 */
-  private explode(x: number, y: number, size: number, power = 1, src = 'other', dmgK = 1): void {
+  /**
+   * 爆炸：一下 10 × power（攻击力升级，范围也跟着涨一点）。o.dmgK 只乘伤害（机甲导弹、坦克的溅射打得轻），
+   * o.radius 指定半径（坦克的小溅射），o.bossK 只乘到 Boss 身上（巨舰锁定 Boss 的那一轮）。
+   */
+  private explode(x: number, y: number, size: number, power = 1, src = 'other', o: { dmgK?: number; radius?: number; bossK?: number } = {}): void {
     const z = this.terrain.heightAt(x, y);
     this.fx.explode(x, y, z, size);
     // 金属地板炸不出坑，留一块焦黑。
     this.addSplat({ x, y, t: 0, blobs: makeSplat(5 + size * 5, 0, 1, true), blood: [rgb(22, 24, 30), rgb(52, 50, 50)] });
-    const r = (20 + size * 20) * (1 + (power - 1) * 0.3);
+    const r = o.radius ?? (20 + size * 20) * (1 + (power - 1) * 0.3);
     for (const b of this.bugs) {
       // 飞在天上的虫也吃爆炸（守军的攻击不分天上地上）。
       if (b.dead >= 0) continue;
       const d = Math.hypot(b.x - x, b.y - y);
-      if (d < r) this.hurt(b, 10 * power * dmgK, x, y, 1 - d / r, src);
+      if (d < r) this.hurt(b, 10 * power * (o.dmgK ?? 1) * (b.rank === 2 ? (o.bossK ?? 1) : 1), x, y, 1 - d / r, src);
     }
     // 爆炸本身不震镜头：炮弹、导弹满屏都是，每发都震眼睛受不了。只有巨舰主炮、轰炸支援的炸弹
     // 在各自落地的地方另外震一下。
@@ -1200,11 +1223,13 @@ export class DefenseScene {
   private impact(b: Bullet): void {
     const t = b.target;
     // 火炮打地面（建造模式）：按伤害值扣血，不是一炮一个。
+    // 火炮打地面：落在目标脚下炸开一小片，范围里的地面虫都挨一下。
     if (b.kind === 'aa' && t && t.lift <= 20) {
-      if (b.hit && t.dead < 0) {
-        this.fx.explode(b.b.x, b.b.y, b.b.z, 0.25);
-        this.hurt(t, b.dmg, b.fromX, b.fromY, 0, 'aa');
-      } else if (Math.random() < 0.45) this.fx.explode(b.b.x, b.b.y, b.b.z, 0.2);
+      this.fx.explode(b.b.x, b.b.y, b.b.z, 0.3);
+      for (const o of this.bugs) {
+        if (o.dead >= 0 || o.lift > 20) continue;
+        if ((o.x - b.b.x) ** 2 + (o.y - b.b.y) ** 2 < AA_SPLASH_R * AA_SPLASH_R) this.hurt(o, b.dmg, b.b.x, b.b.y, 0, 'aa');
+      }
       return;
     }
     if (b.kind === 'aa') {
@@ -1459,7 +1484,7 @@ export class DefenseScene {
       }
       if (d.burst <= 0 && d.cd <= 0) {
         d.target = this.pickTarget(this.inRange(d.x, d.y, this.rangeOf(d)), d.x, d.y, this.claimOf(d));
-        if (d.target) d.burst = 12;
+        if (d.target) d.burst = MECH_BURST;
         else d.cd = 0.25;
       }
       if (d.target) {
@@ -1500,7 +1525,7 @@ export class DefenseScene {
         const pool = fl.length ? fl : ground;
         if (pool.length) {
           d.missileCd = ((MECH_MISSILE_MIN + Math.random() * MECH_MISSILE_SPAN) * FIRE_PAUSE) / this.stat(d.owner, 'rate');
-          for (let k = 0; k < 4; k++) {
+          for (let k = 0; k < MECH_MISSILES; k++) {
             const t = pool[Math.floor(Math.random() * pool.length)];
             const from = this.mechPoint(d, 4, (k % 4 < 2 ? -7 : 7) + (k % 2 ? 1.2 : -1.2), 43);
             this.missiles.push({
@@ -2014,7 +2039,12 @@ export class DefenseScene {
     const turn = (a: number): number => Math.abs(Math.atan2(Math.sin(a - c.yaw), Math.cos(a - c.yaw)));
     const range = this.cruiserRange();
     const inRange = (b: Bug): boolean => Math.hypot(b.x - c.x, b.y - c.y) <= range;
-    const tooClose = (b: Bug): boolean => (this.cross ? Math.hypot(b.x - CORE.x, b.y - CORE.y) < 140 : b.y > LINE_Y - 100);
+    // 太靠近防线 / 核心的虫不打（会炸到自己人那一片）—— Boss 例外。
+    const tooClose = (b: Bug): boolean => b.rank < 2 && (this.cross ? Math.hypot(b.x - CORE.x, b.y - CORE.y) < 140 : b.y > LINE_Y - 100);
+    // 射程里有 Boss：锁定 Boss（血最多的那只），不打虫堆。
+    let boss: Bug | null = null;
+    for (const b of this.bugs) if (b.rank === 2 && b.dead < 0 && inRange(b) && (!boss || b.hp > boss.hp)) boss = b;
+    if (!busy && boss && c.target !== boss && (!c.target || c.target.rank < 2 || c.target.dead >= 0)) c.target = boss;
     if (!busy && (!c.target || c.target.dead >= 0 || tooClose(c.target) || !inRange(c.target))) {
       const pool = this.bugs.filter(
             (b) =>
@@ -2052,8 +2082,11 @@ export class DefenseScene {
       c.charge = Math.min(1, c.charge + dt / 2);
       if (c.charge >= 1) {
         const from = this.cruiserPoint(92, 0, 8);
+        // 锁定的是 Boss：落点跟到它现在的位置（Boss 走得慢，蓄能这两秒挪不了多远），这一轮对 Boss 伤害 ×CRUISER_BOSS_K。
+        const onBoss = !!c.target && c.target.rank === 2 && c.target.dead < 0;
+        if (onBoss) c.lock = v2(c.target!.x, c.target!.y);
         const to = v3(c.lock.x, c.lock.y, this.terrain.heightAt(c.lock.x, c.lock.y));
-        this.bolts.push({ from, to, t: 0, dur: Math.hypot(to.x - from.x, to.y - from.y) / 420, power: this.stat(this.cruiserS, 'dmg') });
+        this.bolts.push({ from, to, t: 0, dur: Math.hypot(to.x - from.x, to.y - from.y) / 420, power: this.stat(this.cruiserS, 'dmg'), bossK: onBoss ? CRUISER_BOSS_K : 1 });
         this.flash(from, 6, rgb(200, 235, 255));
         this.fx.muzzle(from.x, from.y, from.z);
         c.recoil = 1;
@@ -2066,13 +2099,13 @@ export class DefenseScene {
       const b = this.bolts[i];
       b.t += dt;
       if (b.t >= b.dur) {
-        this.explode(b.to.x, b.to.y, 1.9, b.power, 'cruiser');
+        this.explode(b.to.x, b.to.y, 1.9, b.power, 'cruiser', { bossK: b.bossK });
         this.shake = Math.max(this.shake, 0.6);
         // 主炮落点：中心一炸，周围再一圈一圈地连环炸开，和一轮轰炸差不多。
         for (let k = 0; k < 7; k++) {
           const a = Math.random() * Math.PI * 2;
           const r = 18 + Math.random() * 30;
-          this.blasts.push({ x: b.to.x + Math.cos(a) * r, y: b.to.y + Math.sin(a) * r * 0.8, t: 0.12 + k * 0.09 + Math.random() * 0.05, size: 0.7 + Math.random() * 0.4, power: b.power });
+          this.blasts.push({ x: b.to.x + Math.cos(a) * r, y: b.to.y + Math.sin(a) * r * 0.8, t: 0.12 + k * 0.09 + Math.random() * 0.05, size: 0.7 + Math.random() * 0.4, power: b.power, bossK: b.bossK });
         }
         this.bolts.splice(i, 1);
       }
@@ -2081,7 +2114,7 @@ export class DefenseScene {
       const b = this.blasts[i];
       b.t -= dt;
       if (b.t <= 0) {
-        this.explode(b.x, b.y, b.size, b.power, 'cruiser');
+        this.explode(b.x, b.y, b.size, b.power, 'cruiser', { bossK: b.bossK });
         this.blasts.splice(i, 1);
       }
     }
@@ -2888,27 +2921,25 @@ export class DefenseScene {
       g.recoil = g.kind === 'aa' ? g.recoil * Math.exp(-dt * 8) : Math.max(0, g.recoil - dt * 2.5);
       g.cd -= dt;
       if (g.kind === 'tank') {
-        // 坦克不追着虫子乱转：咬住一个虫堆好几秒，炮塔慢慢摆过去，对准了才开炮。
+        // 坦克是单体重炮：挑 Boss > 精英 > 血最多的（同等的挑不用大转炮塔的），炮塔慢慢摆过去，对准了才开炮。
+        // 隔一会儿重新挑一次：Boss 走进射程就换过去。
         g.retarget -= dt;
         const lost = !g.target || g.target.dead >= 0 || (g.target.x - g.x) ** 2 + (g.target.y - g.y) ** 2 > this.gunRange(g) ** 2;
         if (lost || g.retarget <= 0) {
-          const list = this.inRange(g.x, g.y, this.gunRange(g));
-          // 在射界里随机抽几只，挑周围同伴最多、又不用大幅转炮塔的那只。
           let best: Bug | null = null;
           let bestScore = -Infinity;
-          for (let k = 0; k < 10 && list.length; k++) {
-            const c = list[Math.floor(Math.random() * list.length)];
-            const crowd = list.filter((o) => Math.abs(o.x - c.x) < 25 && Math.abs(o.y - c.y) < 25).length;
+          for (const c of this.inRange(g.x, g.y, this.gunRange(g))) {
             const want = Math.atan2(c.y - g.y, c.x - g.x) - g.yaw;
             const turn = Math.abs(Math.atan2(Math.sin(want - g.aim), Math.cos(want - g.aim)));
-            const score = crowd - turn * 10;
+            const score = c.rank * 1e5 + Math.min(c.hp, 5000) - turn * 20;
             if (score > bestScore) {
               bestScore = score;
               best = c;
             }
           }
-          if (best || lost) g.target = best;
-          g.retarget = 3.5 + Math.random() * 2.5;
+          // 咬住目标不乱换（炮塔转得慢，换来换去就一直在转、开不了炮）：只有目标没了，或者出现了更高级的（精英、Boss）才换。
+          if (lost || (best && best.rank > g.target!.rank)) g.target = best;
+          g.retarget = 1.2 + Math.random() * 0.6;
         }
         const t = g.target;
         let aligned = false;
@@ -2929,7 +2960,7 @@ export class DefenseScene {
           const py = g.y - Math.sin(g.yaw) * 2;
           const from = v3(px + Math.cos(dir) * 62, py + Math.sin(dir) * 62, this.terrain.heightAt(g.x, g.y) + 18.8);
           const dist = Math.hypot(t.x - from.x, t.y - from.y);
-          this.shells.push({ from, to: v3(t.x, t.y, this.terrain.heightAt(t.x, t.y)), t: 0, dur: dist / 650, arc: 5, size: 0.9, power: this.stat(g.owner, 'dmg') });
+          this.shells.push({ from, to: v3(t.x, t.y, this.terrain.heightAt(t.x, t.y)), t: 0, dur: dist / 650, arc: 5, size: 0.9, power: this.stat(g.owner, 'dmg'), target: t });
           this.fx.muzzle(from.x, from.y, from.z);
           this.fx.muzzle(from.x, from.y, from.z);
         }
@@ -2983,14 +3014,14 @@ export class DefenseScene {
           );
           // 打飞虫一发命中就炸；打地面按攻击力扣血。没打中的落点沿炮管方向散开（不会偏到别的方向去）。
           const ground = t.lift <= 20;
-          const hit = Math.random() < (ground ? AA_HIT_GROUND : 0.18);
+          const hit = ground || Math.random() < 0.18;
           const dist = Math.hypot(t.x - g.x, t.y - g.y);
           const spread = (Math.random() - 0.5) * 0.08;
           const along = dist + (Math.random() - 0.4) * 40;
           const to = hit
             ? v3(t.x, t.y, t.z + t.lift)
             : v3(g.x + Math.cos(dir + spread) * along, g.y + Math.sin(dir + spread) * along, t.z + t.lift + (Math.random() - 0.3) * 30);
-          this.fire('aa', from, to, t, hit, t.x, t.y + 10, true, AA_DMG * this.stat(g.owner, 'dmg'));
+          this.fire('aa', from, to, t, hit, t.x, t.y + 10, true, (ground ? AA_SPLASH_DMG : AA_DMG) * this.stat(g.owner, 'dmg'));
           this.flash(from, 2.2, rgb(255, 220, 130));
           this.fx.muzzle(from.x, from.y, from.z);
         }
@@ -3027,7 +3058,7 @@ export class DefenseScene {
         if (m.target && m.target.kind === 'flyer' && m.target.dead < 0 && d < 12) {
           this.fx.explode(m.x, m.y, m.z, 0.5);
           this.hurt(m.target, m.target.rank ? 8 * m.power : 99, m.x, m.y + 10, 0.7, 'missile');
-        } else if (m.z - ground < 15) this.explode(m.x, m.y, 0.55, m.power, 'missile', MECH_MISSILE_K);
+        } else if (m.z - ground < 15) this.explode(m.x, m.y, 0.55, m.power, 'missile', { dmgK: MECH_MISSILE_K });
         else this.fx.explode(m.x, m.y, m.z, 0.4);
         this.missiles.splice(i, 1);
       }
@@ -3036,12 +3067,20 @@ export class DefenseScene {
     for (let i = this.shells.length - 1; i >= 0; i--) {
       const s = this.shells[i];
       s.t += dt;
+      // 坦克炮弹追着目标落（目标走了几步也照样打中）。
+      if (s.target && s.target.dead < 0) {
+        s.to.x = s.target.x;
+        s.to.y = s.target.y;
+      }
       if (Math.random() < dt * 30) {
         const p = this.shellPos(s);
         this.fx.trail(p.x, p.y, p.z);
       }
       if (s.t >= s.dur) {
-        this.explode(s.to.x, s.to.y, s.size, s.power ?? 1, 'tank');
+        // 打中目标那一只：一大下；周围只溅一点点。
+        const p = s.power ?? 1;
+        if (s.target && s.target.dead < 0) this.hurt(s.target, TANK_HIT * p, s.from.x, s.from.y, 0.6, 'tank');
+        this.explode(s.to.x, s.to.y, s.size, p, 'tank', { radius: TANK_SPLASH_R, dmgK: TANK_SPLASH_K });
         this.shells.splice(i, 1);
       }
     }
