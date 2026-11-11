@@ -8,7 +8,9 @@ import { Projection } from '../render/projection';
 import { Projector } from '../render/projector';
 import { Snapshotter } from '../render/snapshot';
 import { save } from '../save';
-import { ACHIEVEMENTS, MAPS, type MapInfo, SHOP_ITEMS, isLocked, mapStats, unlockText } from './data';
+import { LIVERY_ITEM, MAPS, type MapInfo, SHOP_GROUPS, type ShopLine, isLocked, mapStats, shopEffect, shopPrice, unlockText } from './data';
+import type { ShopIcon } from './shopIcons';
+import { ACHIEVEMENTS, achievedCount } from '../achievements';
 import { shopIcon } from './shopIcons';
 import { applyLivery } from '../game/livery';
 import { MENU_CSS } from './style';
@@ -23,7 +25,7 @@ import { MENU_CSS } from './style';
  * 界面按 1280×720 排版，再整体缩放到舞台大小 —— 舞台是 16:9，所以任何尺寸下排版都一样。
  *
  * 地图预览（只画地图本身，不画单位）和敌人图标都由 Snapshotter 用游戏自己的绘制代码画出来。
- * 商城：花信用点买永久强化（存档 owned），涂装买下后能随时换。成就还只有样子。
+ * 商城：花信用点给各种武器、水晶核心升永久强化（没有等级上限），涂装买下后能随时换。成就按组列出进度（src/achievements.ts）。
  */
 
 export interface MenuOptions {
@@ -69,6 +71,7 @@ export class MainMenu {
   private readonly thumbs = new Map<string, HTMLCanvasElement>();
   private readonly enemyCanvases = new Map<BugKind, HTMLCanvasElement>();
   private modal: HTMLElement | null = null;
+  private modalKind: 'shop' | 'ach' | null = null;
 
   constructor(
     app: Application,
@@ -110,6 +113,11 @@ export class MainMenu {
   /** 存档变了（信用点、引导进度）就重画一遍：顶上的信用点、地图的锁。 */
   private refresh(): void {
     this.root.querySelector('[data-credits]')!.textContent = save.credits.toLocaleString();
+    // 成就按钮的角标：已达成几个，一个都没有就不显示。
+    const badge = this.root.querySelector('[data-badge]')!;
+    const n = achievedCount();
+    badge.textContent = String(n);
+    badge.classList.toggle('hidden', n === 0);
     this.root.querySelector('[data-sectors]')!.textContent = `SECTORS · ${MAPS.filter((m) => !isLocked(m)).length}/${MAPS.length}`;
     this.renderList();
     this.renderDetail();
@@ -136,7 +144,6 @@ export class MainMenu {
 
   private shell(): string {
     // 按钮上的角标：已达成的成就数，没有就不显示。
-    const achDone = ACHIEVEMENTS.filter((x) => x.progress >= x.goal).length;
     return `
       <div class="pdw-vignette"></div>
       <header class="pdw-top">
@@ -152,7 +159,7 @@ export class MainMenu {
         </div>
         <nav class="pdw-nav">
           <button class="pdw-btn ghost" data-act="shop">${ICONS.shop}<span>商城</span></button>
-          <button class="pdw-btn ghost" data-act="ach">${ICONS.trophy}<span>成就</span>${achDone ? `<i class="pdw-badge">${achDone}</i>` : ''}</button>
+          <button class="pdw-btn ghost" data-act="ach">${ICONS.trophy}<span>成就</span><i class="pdw-badge hidden" data-badge></i></button>
         </nav>
       </header>
       <main class="pdw-body">
@@ -180,7 +187,7 @@ export class MainMenu {
           <div class="pdw-map-row"><span class="pdw-idx">${m.index}</span><b>${m.name}</b></div>
           <small>${m.code}</small>
           <div class="pdw-map-row sub">
-            ${locked ? `<span class="pdw-status locked">${unlockText(m)}</span>` : save.isCleared(m.id) ? '<span class="pdw-status ok">已通关</span>' : '<span class="pdw-status ok">可部署</span>'}
+            ${locked ? `<span class="pdw-status locked">${unlockText(m)}</span>` : save.isCleared(m.id) ? `<span class="pdw-status ok">已通关 ×${save.clears(m.id)}</span>` : '<span class="pdw-status ok">可部署</span>'}
             <span class="pdw-pips sm">${pips(m.difficulty)}</span>
           </div>
         </div>`;
@@ -251,7 +258,7 @@ export class MainMenu {
         </div>
       </div>
       <div class="pdw-actions">
-        ${m.hints ? '' : `<button class="pdw-btn ghost endless" data-act="endless" title="波次不封顶，每一波虫的血量和防御都会上涨，看你能守到第几波"><span>无尽模式</span><small>${save.endlessBest(m.id) ? `最佳 第 ${save.endlessBest(m.id)} 波` : '暂无纪录'}</small></button>`}
+        ${m.hints ? '' : `<button class="pdw-btn ghost endless" data-act="endless" title="波次不封顶，每一波虫的血量和防御都会上涨，看你能守到第几波"><span>无尽模式</span><small>${save.endlessBest(m.id) ? `最佳 第 ${save.endlessBest(m.id)} 波 · ${save.endlessRuns(m.id)} 次` : '暂无纪录'}</small></button>`}
         <button class="pdw-btn start" data-act="start">${ICONS.play}<span>开始游戏</span></button>
       </div>`;
 
@@ -371,86 +378,145 @@ export class MainMenu {
     ctx.drawImage(src, 0, 0);
   }
 
-  // ------------------------------------------------------------ 商城 / 成就（成就只有样子）
+  // ------------------------------------------------------------ 商城 / 成就
 
+  /** 存档在外面被改了（比如成就发了信用点）：顶上的数字、列表、详情重画；开着的商城 / 成就也重画。 */
+  saveChanged(): void {
+    if (!this.visible) return;
+    this.refresh();
+    if (this.modalKind) this.openModal(this.modalKind);
+  }
+
+  /**
+   * 开商城 / 成就。已经开着同一个的话只在原地重画里面的内容（买了东西、换了涂装）：不重新建遮罩
+   * —— 遮罩有淡入动画，整个换掉的话每点一下界面就闪一下 —— 滚动位置也留着。
+   */
   private openModal(which: 'shop' | 'ach'): void {
+    if (this.modal && this.modalKind === which) {
+      this.renderModal(this.modal, which);
+      return;
+    }
     this.closeModal();
     const m = document.createElement('div');
     m.className = 'pdw-modal';
-    const body =
-      which === 'shop'
-        ? `<div class="pdw-shop">${SHOP_ITEMS.map((it) => {
-            const owned = save.owns(it.id);
-            const livery = it.id === 'livery-red';
-            const on = livery && save.livery === 'red';
-            // 没买：价钱（信用点不够就灰着）；买了：已拥有；涂装买了以后是装备 / 卸下的开关。
-            const btn = !owned
-              ? `<button class="pdw-btn buy" data-buy="${it.id}" ${save.credits < it.price ? 'disabled' : ''}>${ICONS.credit}<span>${it.price.toLocaleString()}</span></button>`
-              : livery
-                ? `<button class="pdw-btn buy ${on ? 'equipped' : 'owned'}" data-livery="${on ? 'blue' : 'red'}"><span>${on ? '已装备 · 点击卸下' : '已拥有 · 点击装备'}</span></button>`
-                : '<button class="pdw-btn buy owned" disabled><span>已拥有 · 已生效</span></button>';
-            return `
-            <div class="pdw-item${owned ? ' owned' : ''}">
-              <span class="pdw-tag">${it.tag}</span>
-              <div class="pdw-item-art"></div>
-              <b>${it.name}</b>
-              <small>${it.desc}</small>
-              ${btn}
-            </div>`;
-          }).join('')}</div>`
-        : `<div class="pdw-ach">${ACHIEVEMENTS.map((a) => {
-            const done = a.progress >= a.goal;
-            const pct = Math.min(100, (a.progress / a.goal) * 100);
+    m.innerHTML = '<div class="pdw-panel pdw-dialog"></div>';
+    m.addEventListener('click', (e) => {
+      if (e.target === m) this.closeModal();
+    });
+    this.root.appendChild(m);
+    this.modal = m;
+    this.modalKind = which;
+    this.renderModal(m, which);
+  }
+
+  /** 填商城 / 成就面板里面的内容，绑按钮。 */
+  private renderModal(m: HTMLElement, which: 'shop' | 'ach'): void {
+    const dialog = m.querySelector<HTMLElement>('.pdw-dialog')!;
+    const keepScroll = dialog.scrollTop;
+    const lv = save.totalLevels;
+    dialog.innerHTML = `
+      <div class="pdw-head">
+        <h2>${which === 'shop' ? '军需商城' : '战功成就'}</h2>
+        <span>${which === 'shop' ? `ARMORY · 强化共 ${lv} 级` : `ACHIEVEMENTS · ${achievedCount()}/${ACHIEVEMENTS.length}`}</span>
+        <button class="pdw-x" aria-label="关闭">${ICONS.close}</button>
+      </div>
+      ${which === 'shop' ? this.shopBody() : this.achBody()}`;
+    dialog.scrollTop = keepScroll;
+    dialog.querySelector('.pdw-x')!.addEventListener('click', () => this.closeModal());
+    if (which !== 'shop') return;
+    // 每张卡的图标用游戏模型现画。
+    dialog.querySelectorAll<HTMLElement>('[data-art]').forEach((art) => art.appendChild(shopIcon(this.snap, art.dataset.art as ShopIcon)));
+    // 升级 / 买涂装 / 换涂装：存进存档，顶上的信用点跟着变，商城原地重画。
+    const lines = new Map<string, ShopLine>(SHOP_GROUPS.flatMap((g) => g.lines.map((l): [string, ShopLine] => [l.id, l])));
+    const bought = (ok: boolean): void => {
+      if (!ok) return;
+      this.refresh();
+      this.renderModal(m, 'shop');
+    };
+    dialog.querySelectorAll<HTMLElement>('[data-buy]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const line = lines.get(b.dataset.buy!)!;
+        bought(save.upgrade(line.id, shopPrice(line, save.level(line.id))));
+      }),
+    );
+    dialog.querySelector('[data-livery-buy]')?.addEventListener('click', () => bought(save.buy(LIVERY_ITEM.id, LIVERY_ITEM.price)));
+    dialog.querySelectorAll<HTMLElement>('[data-livery]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const l = b.dataset.livery === 'red' ? 'red' : 'blue';
+        save.setLivery(l);
+        applyLivery(l);
+        this.renderModal(m, 'shop');
+      }),
+    );
+  }
+
+  /**
+   * 商城：每种守军一张卡（图标 + 名字），下面每条强化一行：名字、等级、当前 → 下一级的效果、价钱按钮；
+   * 最后是水晶核心和涂装（涂装是买断 / 装备的开关）。
+   */
+  private shopBody(): string {
+    const cards = SHOP_GROUPS.map((g) => {
+      const rows = g.lines
+        .map((line) => {
+          const lv = save.level(line.id);
+          const price = shopPrice(line, lv);
+          return `
+          <div class="pdw-shop-row">
+            <span class="pdw-shop-name">${line.name}</span>
+            <span class="pdw-shop-lv">Lv.${lv}</span>
+            <span class="pdw-shop-eff"><em>${lv ? shopEffect(line, lv) : '—'}</em> → <em class="next">${shopEffect(line, lv + 1)}</em></span>
+            <button class="pdw-btn buy" data-buy="${line.id}" ${save.credits < price ? 'disabled' : ''}>${ICONS.credit}<span>${price.toLocaleString()}</span></button>
+          </div>`;
+        })
+        .join('');
+      return `
+        <div class="pdw-shop-card">
+          <div class="pdw-shop-head"><div class="pdw-item-art" data-art="${g.icon}"></div><div><span class="pdw-tag">${g.tag}</span><b>${g.name}</b></div></div>
+          ${rows}
+        </div>`;
+    }).join('');
+    const it = LIVERY_ITEM;
+    const owned = save.owns(it.id);
+    const on = owned && save.livery === 'red';
+    const btn = !owned
+      ? `<button class="pdw-btn buy" data-livery-buy ${save.credits < it.price ? 'disabled' : ''}>${ICONS.credit}<span>${it.price.toLocaleString()}</span></button>`
+      : `<button class="pdw-btn buy ${on ? 'equipped' : 'owned'}" data-livery="${on ? 'blue' : 'red'}"><span>${on ? '已装备 · 点击卸下' : '已拥有 · 点击装备'}</span></button>`;
+    const livery = `
+      <div class="pdw-shop-card">
+        <div class="pdw-shop-head"><div class="pdw-item-art" data-art="${it.icon}"></div><div><span class="pdw-tag">${it.tag}</span><b>${it.name}</b></div></div>
+        <div class="pdw-shop-row"><span class="pdw-shop-name wide">${it.desc}</span>${btn}</div>
+      </div>`;
+    return `<div class="pdw-shop">${cards}${livery}</div>`;
+  }
+
+  /** 成就：按组排，每条一根进度条；达成的写"已达成"，没达成的写进度。 */
+  private achBody(): string {
+    const groups = [...new Set(ACHIEVEMENTS.map((a) => a.group))];
+    return `<div class="pdw-ach">${groups
+      .map(
+        (g) => `<div class="pdw-ach-group">${g}</div>${ACHIEVEMENTS.filter((a) => a.group === g)
+          .map((a) => {
+            const done = save.isAchieved(a.id);
+            const v = Math.min(a.value(), a.goal);
+            const pct = done ? 100 : Math.min(100, (v / a.goal) * 100);
             return `
             <div class="pdw-ach-row${done ? ' done' : ''}">
               <span class="pdw-ach-icon">${ICONS.trophy}</span>
               <div class="pdw-ach-text">
-                <b>${a.name}</b><small>${a.desc}</small>
+                <b>${a.name}</b><small>${a.desc} · 奖励 ${ICONS.credit}${a.reward}</small>
                 <div class="pdw-bar"><i style="width:${pct}%"></i></div>
               </div>
-              <span class="pdw-ach-num">${done ? '已达成' : `${a.progress.toLocaleString()} / ${a.goal.toLocaleString()}`}</span>
+              <span class="pdw-ach-num">${done ? '已达成' : `${v.toLocaleString()} / ${a.goal.toLocaleString()}`}</span>
             </div>`;
-          }).join('')}</div>`;
-    m.innerHTML = `
-      <div class="pdw-panel pdw-dialog">
-        <div class="pdw-head">
-          <h2>${which === 'shop' ? '军需商城' : '战功成就'}</h2>
-          <span>${which === 'shop' ? `ARMORY · 已拥有 ${SHOP_ITEMS.filter((it) => save.owns(it.id)).length}/${SHOP_ITEMS.length}` : `ACHIEVEMENTS · ${ACHIEVEMENTS.filter((a) => a.progress >= a.goal).length}/${ACHIEVEMENTS.length}`}</span>
-          <button class="pdw-x" aria-label="关闭">${ICONS.close}</button>
-        </div>
-        ${body}
-      </div>`;
-    m.addEventListener('click', (e) => {
-      if (e.target === m) this.closeModal();
-    });
-    m.querySelector('.pdw-x')!.addEventListener('click', () => this.closeModal());
-    // 商城：每件商品的图标用游戏模型现画。
-    if (which === 'shop') {
-      m.querySelectorAll('.pdw-item-art').forEach((art, i) => art.appendChild(shopIcon(this.snap, SHOP_ITEMS[i].icon)));
-      // 买东西 / 换涂装：存进存档，顶上的信用点跟着变，商城整个重画一遍（按钮状态、机枪兵图标的涂装）。
-      m.querySelectorAll<HTMLElement>('[data-buy]').forEach((b) =>
-        b.addEventListener('click', () => {
-          const it = SHOP_ITEMS.find((x) => x.id === b.dataset.buy)!;
-          if (!save.buy(it.id, it.price)) return;
-          this.refresh();
-          this.openModal('shop');
-        }),
-      );
-      m.querySelectorAll<HTMLElement>('[data-livery]').forEach((b) =>
-        b.addEventListener('click', () => {
-          const l = b.dataset.livery === 'red' ? 'red' : 'blue';
-          save.setLivery(l);
-          applyLivery(l);
-          this.openModal('shop');
-        }),
-      );
-    }
-    this.root.appendChild(m);
-    this.modal = m;
+          })
+          .join('')}`,
+      )
+      .join('')}</div>`;
   }
 
   private closeModal(): void {
     this.modal?.remove();
     this.modal = null;
+    this.modalKind = null;
   }
 }

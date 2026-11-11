@@ -13,8 +13,8 @@ import { Projector } from '../render/projector';
 import type { Layers } from '../render/scene';
 import { fallPose, strideCycle, walkPose } from '../characters/poses';
 import { CORE, END_Y, LANE_CX, TOP_Y, drawFloor, spanAt } from './floor';
-import { AIRSTRIKE_COST, BUILDS, CRUISER_COST, CRUISER_ID, CRUISER_RANGE, type BuildKind, type StatKey, buildingMesh, statDef } from './buildings';
-import { CROSS_C, PLAT, crossBlocks, crossClamp, crossRampTops, crossRowSpan, crossSpawn, crossWalkable } from './crossmap';
+import { AIRSTRIKE_CD, AIRSTRIKE_COST, BUILDS, CORE_ID, CRUISER_COST, CRUISER_ID, CRUISER_RANGE, type BuildKind, type StatKey, buildingMesh, freshUp, statDef } from './buildings';
+import { ARM, CROSS_C, PLAT, crossBlocks, crossClamp, crossRampTops, crossRowSpan, crossSpawn, crossWalkable } from './crossmap';
 import { PlatformGround } from './ground';
 import { type FieldDef, field } from './fields';
 import { BUG_LOOKS, BUG_SIZE, type BugKind, type BugLook, type SplatBlob, drawBug, drawSplat, makeSplat, rankLook } from './bugs';
@@ -37,11 +37,25 @@ import { BUG_LOOKS, BUG_SIZE, type BugKind, type BugLook, type SplatBlob, drawBu
 export const LINE_Y = 470;
 /** 炮艇从画面下方多远的地方进场。 */
 const PLANE_ENTRY_Y = 980;
+/** 炮艇的航速；两颗炸弹之间隔多远（略小于一颗炸弹的爆炸直径 88，一路炸过去连成一条）。 */
+const PLANE_SPEED = 240;
+const BOMB_GAP = 84;
+/** 炸弹往前飘：从炮艇上扔下去以后，落地时大约在投弹点前方这么远（看炸弹落点决定投不投）。 */
+const BOMB_DRIFT = 177;
 
 /** 射程：步枪只管正面一条纵列；机枪的扇面宽一些、远一些；坦克更远。 */
 const RIFLE_RANGE = 210;
 /** 机甲：比步兵打得远、扇面宽、射速快；肩上导弹巢专打飞虫。 */
 const MECH_RANGE = 300;
+/**
+ * 机甲的火力：机炮一发多少、导弹落地爆炸的伤害倍数（爆炸本身一下 10，导弹只吃 MECH_MISSILE_K）、两轮导弹之间隔多久（秒，再乘 FIRE_PAUSE、除以射速）。
+ * 原来机炮一发 2、导弹满额 10、隔 2.6~3.8 秒：一台机甲约 58 点秒伤（其中导弹的范围爆炸占了八成），300 晶矿一台，
+ * 每晶矿的火力是兵营的四五倍、坦克的两倍。现在约 35（-40%）。
+ */
+const MECH_CANNON_DMG = 1.6;
+const MECH_MISSILE_K = 0.7;
+const MECH_MISSILE_MIN = 3.2;
+const MECH_MISSILE_SPAN = 1.4;
 const MISSILE_RANGE = 360;
 const TANK_RANGE = 330;
 const AA_RANGE = 320;
@@ -81,16 +95,21 @@ const RIFLE_DMG = 0.8;
 const RIFLE_PAUSE_MIN = 0.8;
 const RIFLE_PAUSE_SPAN = 0.5;
 
-/** 商城买下的永久强化（menu/data.ts 按存档算出来，开局传进来）。都是倍率或加数，1 / 0 = 没买。 */
+/**
+ * 商城的永久强化（menu/data.ts 按存档里每一项的等级算出来，开局传进来）。都是倍率，1 = 没买。
+ *
+ *   units   每种守军（兵营的机枪兵、车间的机甲、坦克、火炮、巨舰）各自的攻击力、射程、射速、生产速度、生命，
+ *           在 stat() 里乘到局内升级线上（局内升级 × 商城强化）；生命乘到机枪兵 / 机甲的血量上
+ *   core    水晶核心的血量上限、反击伤害、自动恢复，同样乘在局内升级线上（局内反击 / 恢复还是 0 级时，商城加成也是 0）
+ */
+export type PerkUnit = 'barracks' | 'factory' | 'tank' | 'artillery' | 'cruiser';
+export type PerkStat = 'dmg' | 'range' | 'rate' | 'speed' | 'hp';
+export type CoreStat = 'hp' | 'strike' | 'regen';
 export interface Perks {
-  /** 机枪兵生命倍率、步枪伤害倍率、兵营造兵少几秒、机甲每轮多发几枚导弹、巨舰主炮冷却倍率。 */
-  marineHp: number;
-  rifleDmg: number;
-  draftTime: number;
-  missiles: number;
-  cruiserCd: number;
+  units: Partial<Record<PerkUnit, Partial<Record<PerkStat, number>>>>;
+  core: Record<CoreStat, number>;
 }
-export const NO_PERKS: Perks = { marineHp: 1, rifleDmg: 1, draftTime: 0, missiles: 0, cruiserCd: 1 };
+export const NO_PERKS: Perks = { units: {}, core: { hp: 1, strike: 1, regen: 1 } };
 /** 建造模式：机甲的血量（建筑的血量在 buildings.ts）。 */
 const MECH_HP = 60;
 
@@ -179,7 +198,9 @@ const CRUISER_SCALE = 1.4;
  * 水晶核心：地图中轴上（十字高地在正中）。虫子冲到跟前会一直撕咬 / 喷吐它，血打空这一局就输了。
  */
 export { CORE };
-const CORE_HP = 200;
+/** 水晶核心的反击：多远以内的虫会挨打、隔多久打一发（每发只打最近的一只）。伤害见 buildings.ts 的 core.strike。 */
+const CORE_STRIKE_R = 95;
+const CORE_STRIKE_EVERY = 1;
 /** 核心占地的半径（虫贴到这个距离就算够得着）。 */
 const CORE_R = 18;
 
@@ -320,7 +341,7 @@ const HIT_SCALE = 10;
 const HIT_MERGE = 0.25;
 const HIT_TIME = 0.7;
 const HIT_MAX = 160;
-/** 核心血条：两排小方块，一排 CORE_PIPS 个，一块 = CORE_HP / (2 × CORE_PIPS)。 */
+/** 核心血条：两排小方块，一排 CORE_PIPS 个。 */
 const CORE_PIPS = 10;
 /** 核心碎掉时的碎晶颜色。 */
 const CORE_SHARDS = [rgb(84, 206, 240), rgb(170, 240, 255), rgb(40, 130, 190), rgb(255, 255, 255)];
@@ -603,6 +624,8 @@ interface Bullet {
   arrived: boolean;
   /** 打中扣多少血。 */
   dmg: number;
+  /** 伤害记到谁头上（统计用；不填按 kind 算）。 */
+  src?: string;
 }
 
 /** 火星：命中 / 打在地上溅起来的亮点，很快熄灭。 */
@@ -719,9 +742,12 @@ interface Plane {
   y: number;
   z: number;
   dropCd: number;
-  /** 在哪一段 y 里投弹（默认是防线前到地图顶；十字高地的轰炸支援只炸虫最密的那一小段）。 */
-  dropY0?: number;
-  dropY1?: number;
+  /** 炸弹落在哪儿才投（落点的 y）：单通道是防线以前到地图顶；十字高地是四条路上、高台以外。 */
+  landY0: number;
+  landY1: number;
+  /** 十字高地：落点在这一段里不投（核心所在的高台）。 */
+  skip0?: number;
+  skip1?: number;
 }
 
 interface Bomb {
@@ -811,7 +837,7 @@ export class DefenseScene {
     kind: 'cruiser',
     x: 0,
     y: 0,
-    up: { count: 1, speed: 1, dmg: 1, range: 1, rate: 1 },
+    up: freshUp(),
     prog: 0,
     door: 0,
     doorWant: 0,
@@ -824,6 +850,9 @@ export class DefenseScene {
     rally: v2(0, 0),
     spent: CRUISER_COST,
   };
+  /** 水晶核心的升级线（同样借用建筑的结构，不在 structures 里）；反击的冷却。 */
+  readonly coreS: Structure = { ...this.cruiserS, id: CORE_ID, kind: 'core', up: freshUp(), spent: 0 };
+  private coreCd = 0;
   /** 巨舰到过待命位置了没有：第一次飞进场是快的，之后右键挪位置是慢的。 */
   private cruiserArrived = false;
   readonly bolts: Bolt[] = [];
@@ -845,8 +874,7 @@ export class DefenseScene {
   view = { l: -1e4, t: TOP_Y, r: 1e4, b: 1e4 };
   /** 飘在虫头上的扣血数字。 */
   private readonly hits: HitNum[] = [];
-  coreHp = CORE_HP;
-  readonly coreMax = CORE_HP;
+  coreHp = 0;
   /** 核心挨打后的闪白（0..1）。 */
   coreHit = 0;
   /** 核心被打碎：不再刷虫，lostT 记碎了多久（外面据此弹结算）。 */
@@ -859,6 +887,8 @@ export class DefenseScene {
   private sinceLaunch = 0;
   /** 统计（自动玩家 tools/sim.ts 用）：各种守军一共打了多少伤害、每只 Boss 从第一次挨打到被打死用了几秒。 */
   readonly stats = { dmg: {} as Record<string, number>, bossTimes: [] as number[] };
+  /** 这一局的战绩（外面每隔一会儿存进存档，成就用）：击杀、其中精英 / Boss / 飞虫各多少；水晶有没有哪条线升满过。 */
+  readonly tally = { kills: 0, elites: 0, bosses: 0, flyers: 0, coreMaxed: false };
 
   /** 十字高地：虫从四个方向来，没有"防线"那一行；几何在 crossmap.ts。 */
   readonly cross: boolean = this.field.layout === 'cross';
@@ -889,6 +919,9 @@ export class DefenseScene {
   constructor(opts: { endless?: boolean; perks?: Perks } = {}) {
     this.perks = opts.perks ?? NO_PERKS;
     this.endless = !!opts.endless;
+    this.coreHp = this.coreMax;
+    this.coreS.x = CORE.x;
+    this.coreS.y = CORE.y;
     this.fx.debrisColors = MOON_DEBRIS;
     this.fx.smokeLift = 45;
     this.crystals = this.field.startCrystals;
@@ -1007,7 +1040,7 @@ export class DefenseScene {
   /** 一个守军下一轮大概能打出多少伤害（挑目标时记到目标头上）：机枪兵一个点射、机甲一轮连射、火炮一小段。 */
   private claimOf(d: Defender): number {
     const k = this.stat(d.owner, 'dmg');
-    return d.kind === 'rifle' ? 1.5 * RIFLE_DMG * this.perks.rifleDmg * k : 13 * k;
+    return d.kind === 'rifle' ? 1.5 * RIFLE_DMG * k : 6.6 * MECH_CANNON_DMG * k;
   }
 
   private claimOfGun(g: Gun): number {
@@ -1036,7 +1069,11 @@ export class DefenseScene {
     if (b.struck < 0) b.struck = this.time;
     this.hitNumber(b, dealt, b.hp <= 0);
     if (b.hp > 0) return;
+    this.tally.kills++;
+    if (b.rank === 1) this.tally.elites++;
+    if (b.kind === 'flyer') this.tally.flyers++;
     if (b.rank === 2) {
+      this.tally.bosses++;
       this.stats.bossTimes.push(this.time - b.struck);
       this.fx.explode(b.x, b.y, b.z, 2.6);
       this.shake = Math.max(this.shake, 0.7);
@@ -1104,7 +1141,8 @@ export class DefenseScene {
   }
 
   /** power：威力倍率（坦克攻击力升级），炸得更狠、范围更大一点。 */
-  private explode(x: number, y: number, size: number, power = 1, src = 'other'): void {
+  /** power：威力倍率（攻击力升级），伤害和范围都跟着涨；dmgK 只乘伤害（机甲导弹的爆炸打得轻一些）。 */
+  private explode(x: number, y: number, size: number, power = 1, src = 'other', dmgK = 1): void {
     const z = this.terrain.heightAt(x, y);
     this.fx.explode(x, y, z, size);
     // 金属地板炸不出坑，留一块焦黑。
@@ -1114,7 +1152,7 @@ export class DefenseScene {
       // 飞在天上的虫也吃爆炸（守军的攻击不分天上地上）。
       if (b.dead >= 0) continue;
       const d = Math.hypot(b.x - x, b.y - y);
-      if (d < r) this.hurt(b, 10 * power, x, y, 1 - d / r, src);
+      if (d < r) this.hurt(b, 10 * power * dmgK, x, y, 1 - d / r, src);
     }
     // 爆炸本身不震镜头：炮弹、导弹满屏都是，每发都震眼睛受不了。只有巨舰主炮、轰炸支援的炸弹
     // 在各自落地的地方另外震一下。
@@ -1180,7 +1218,7 @@ export class DefenseScene {
     if (b.hit && t && t.dead < 0) {
       this.spray(b.b, 4, t.look.blood[1], 50);
       this.spray(b.b, 2, b.color, 60);
-      this.hurt(t, b.dmg, b.fromX, b.fromY, 0, b.kind === 'rifle' ? 'rifle' : 'mech');
+      this.hurt(t, b.dmg, b.fromX, b.fromY, 0, b.src ?? (b.kind === 'rifle' ? 'rifle' : 'mech'));
     } else {
       if (Math.random() < 0.6) this.fx.trail(b.b.x, b.b.y, b.b.z + 1);
       this.spray(b.b, 3, rgb(230, 226, 210), 45);
@@ -1287,6 +1325,8 @@ export class DefenseScene {
     this.updateGuns(dt);
     if (this.cruiserOn) this.updateCruiser(dt);
     this.updateStructures(dt);
+    this.updateCore(dt);
+    this.airstrikeCd = Math.max(0, this.airstrikeCd - dt);
     this.updateProjectiles(dt);
     this.updateDebris(dt);
     this.fx.update(dt, this.terrain);
@@ -1404,7 +1444,7 @@ export class DefenseScene {
           const a = this.muzzleOf(d);
           const hit = t.dead < 0 && Math.random() < 0.5;
           const b = hit ? v3(t.x, t.y, t.z + t.lift + 4) : v3(t.x + (Math.random() - 0.5) * 24, t.y - Math.random() * 30, t.z + 1);
-          this.fire('rifle', a, b, t, hit, d.x, d.y, true, RIFLE_DMG * this.perks.rifleDmg * this.stat(d.owner, 'dmg'));
+          this.fire('rifle', a, b, t, hit, d.x, d.y, true, RIFLE_DMG * this.stat(d.owner, 'dmg'));
           this.flash(a, 1.3, rgb(200, 240, 255));
         }
         continue;
@@ -1436,7 +1476,7 @@ export class DefenseScene {
         if (t) {
           const hit = t.dead < 0 && Math.random() < 0.55;
           const b = hit ? v3(t.x, t.y, t.z + t.lift + 4) : v3(t.x + (Math.random() - 0.5) * 30, t.y + (Math.random() - 0.5) * 24, t.z + 1);
-          this.fire('cannon', a, b, t, hit, d.x, d.y, d.burst % 2 === 0, 2 * this.stat(d.owner, 'dmg'));
+          this.fire('cannon', a, b, t, hit, d.x, d.y, d.burst % 2 === 0, MECH_CANNON_DMG * this.stat(d.owner, 'dmg'));
         }
         this.flash(a, 2.2, rgb(255, 210, 120));
         // 大号弹壳：从炮座外侧往外抛。
@@ -1459,8 +1499,8 @@ export class DefenseScene {
         const ground = fl.length ? [] : this.inRange(d.x, d.y, this.rangeOf(d));
         const pool = fl.length ? fl : ground;
         if (pool.length) {
-          d.missileCd = ((2.6 + Math.random() * 1.2) * FIRE_PAUSE) / this.stat(d.owner, 'rate');
-          for (let k = 0; k < 4 + this.perks.missiles; k++) {
+          d.missileCd = ((MECH_MISSILE_MIN + Math.random() * MECH_MISSILE_SPAN) * FIRE_PAUSE) / this.stat(d.owner, 'rate');
+          for (let k = 0; k < 4; k++) {
             const t = pool[Math.floor(Math.random() * pool.length)];
             const from = this.mechPoint(d, 4, (k % 4 < 2 ? -7 : 7) + (k % 2 ? 1.2 : -1.2), 43);
             this.missiles.push({
@@ -2017,7 +2057,7 @@ export class DefenseScene {
         this.flash(from, 6, rgb(200, 235, 255));
         this.fx.muzzle(from.x, from.y, from.z);
         c.recoil = 1;
-        c.cd = ((14 + Math.random() * 4) * this.perks.cruiserCd) / this.stat(this.cruiserS, 'rate');
+        c.cd = (14 + Math.random() * 4) / this.stat(this.cruiserS, 'rate');
         c.target = null;
         c.lock = null;
       }
@@ -2084,7 +2124,59 @@ export class DefenseScene {
   private stat(owner: Structure | undefined, key: StatKey): number {
     if (!owner) return 1;
     const def = statDef(owner.kind, key);
-    return def ? def.values[owner.up[key] - 1] : 1;
+    const v = def ? def.values[owner.up[key] - 1] : 1;
+    // 商城强化：局内升级线 × 这种守军在商城里升的倍率（数量线和水晶核心的线不吃）。
+    return key === 'dmg' || key === 'range' || key === 'rate' || key === 'speed' ? v * this.perk(owner.kind, key) : v;
+  }
+
+  /** 商城给某种守军的某项强化（倍率，没买是 1）。 */
+  private perk(kind: BuildKind, key: PerkStat): number {
+    return this.perks.units[kind as PerkUnit]?.[key] ?? 1;
+  }
+
+  /** 机枪兵 / 机甲的血量上限（吃商城的生命强化）。 */
+  private maxHpOf(d: Defender): number {
+    return d.kind === 'mech' ? MECH_HP * this.perk('factory', 'hp') : MARINE_HP * this.perk('barracks', 'hp');
+  }
+
+  // ------------------------------------------------------------ 水晶核心
+
+  /** 核心血量上限：升级线 × 商城的"水晶加固"。 */
+  get coreMax(): number {
+    return Math.round(this.stat(this.coreS, 'hp') * this.perks.core.hp);
+  }
+
+  /** 点在 (x, y) 上的是不是核心（水晶立着，点到上半截时换算的地面点偏上，往下多试一截）。 */
+  coreAt(x: number, y: number): boolean {
+    return !this.lost && Math.abs(x - CORE.x) < 24 && y > CORE.y - 60 && y < CORE.y + 24;
+  }
+
+  /** 核心每帧：自动回血；反击 —— 每 CORE_STRIKE_EVERY 秒朝射程里最近的那一只射一道光（单体）。都吃商城加成。 */
+  private updateCore(dt: number): void {
+    if (this.lost) return;
+    const regen = this.stat(this.coreS, 'regen') * this.perks.core.regen;
+    if (regen > 0 && this.coreHp < this.coreMax) this.coreHp = Math.min(this.coreMax, this.coreHp + regen * dt);
+    const strike = this.stat(this.coreS, 'strike') * this.perks.core.strike;
+    this.coreCd -= dt;
+    if (strike <= 0 || this.coreCd > 0) return;
+    let t: Bug | null = null;
+    let td = Infinity;
+    for (const b of this.inRange(CORE.x, CORE.y, CORE_STRIKE_R)) {
+      const d = Math.hypot(b.x - CORE.x, b.y - CORE.y);
+      if (d < td) {
+        td = d;
+        t = b;
+      }
+    }
+    if (!t) {
+      this.coreCd = 0.2;
+      return;
+    }
+    this.coreCd = CORE_STRIKE_EVERY;
+    const from = v3(CORE.x, CORE.y, this.terrain.heightAt(CORE.x, CORE.y) + 40);
+    this.fire('rifle', from, v3(t.x, t.y, t.z + t.lift + 4), t, true, CORE.x, CORE.y, true, strike);
+    this.bullets[this.bullets.length - 1].src = 'core';
+    this.flash(from, 3, rgb(170, 240, 255));
   }
 
   // ------------------------------------------------------------ 建造模式
@@ -2250,7 +2342,7 @@ export class DefenseScene {
       kind,
       x,
       y,
-      up: { count: 1, speed: 1, dmg: 1, range: 1, rate: 1 },
+      up: freshUp(),
       prog: 0,
       door: 0,
       doorWant: 0,
@@ -2283,6 +2375,7 @@ export class DefenseScene {
   /** 把一座建筑的某条升级线升一级；满级、没有这条线或钱不够返回 false。 */
   /** 按编号找：建筑，或者（编号 CRUISER_ID）巨舰。 */
   private findS(id: number): Structure | null {
+    if (id === CORE_ID) return this.lost ? null : this.coreS;
     if (id === CRUISER_ID) {
       if (!this.cruiserOn) return null;
       // 巨舰飞进场、右键挪位置的途中也要对得上（升级面板跟着它走）。
@@ -2302,9 +2395,18 @@ export class DefenseScene {
     const cost = def.costs[lv - 1];
     if (this.crystals < cost) return false;
     this.crystals -= cost;
+    // 核心升血量上限：当前血量跟着加上去（不是把差值补满，也不会因为升级掉血）。
+    const before = s === this.coreS ? this.coreMax : 0;
     s.up[key] = lv + 1;
     s.spent += cost;
     s.flash = 1;
+    if (s === this.coreS) {
+      this.coreHp += this.coreMax - before;
+      if (s.up[key] >= def.values.length) this.tally.coreMaxed = true;
+      this.coreHit = 0;
+      this.fx.poof(CORE.x, CORE.y + 14, 0, 0.8);
+      return true;
+    }
     if (s !== this.cruiserS) this.fx.poof(s.x, s.y + BUILDS[s.kind].h / 2, 0, 0.8);
     return true;
   }
@@ -2336,12 +2438,21 @@ export class DefenseScene {
     return true;
   }
 
-  /** 轰炸支援：花晶矿立刻叫一组炮艇，从后方飞过来，沿虫最多的那一列投弹。 */
+  /** 轰炸支援还要冷却几秒（0 = 现在就能叫）。 */
+  airstrikeCd = 0;
+
+  /**
+   * 轰炸支援：花晶矿立刻叫一组炮艇（两架并排），从后方飞过来，沿虫最多的那一列飞过整个战场，
+   * 过了防线才投弹（落点从防线一路到地图顶），每隔 BOMB_GAP 一颗，炸出一整条。叫完要冷却 AIRSTRIKE_CD 秒。
+   */
   callAirstrike(): boolean {
-    if (this.crystals < AIRSTRIKE_COST || this.lost) return false;
+    if (this.crystals < AIRSTRIKE_COST || this.lost || this.airstrikeCd > 0) return false;
     this.crystals -= AIRSTRIKE_COST;
+    this.airstrikeCd = AIRSTRIKE_CD;
+    // 第二架比第一架晚半个间隔投，两列炸点错开，炸出来的一条更匀。
+    const stagger = BOMB_GAP / PLANE_SPEED / 2;
     if (this.cross) {
-      // 十字高地：挑虫最密的一团（随便抽几只，数周围 60 以内的同伴），炮艇从南往北飞过去，只在那一团上空投弹。
+      // 十字高地：挑虫最密的一团（随便抽几只，数周围 60 以内的同伴），炮艇沿那一列从南往北飞过整张图。
       const live = this.bugs.filter((b) => b.dead < 0);
       let best = live[0];
       let bestN = -1;
@@ -2354,16 +2465,19 @@ export class DefenseScene {
         }
       }
       const tx = best ? best.x : CORE.x;
-      const ty = best ? best.y : CORE.y - 200;
-      const drop = { dropY0: ty - 70, dropY1: ty + 70 };
-      this.planes.push({ x: tx - 18, y: ty + 520, z: 120, dropCd: 0, ...drop }, { x: tx + 18, y: ty + 550, z: 124, dropCd: 0.06, ...drop });
+      // 十字高地没有一条防线：核心的高台就是基地，炸弹只落在高台外面的路上。
+      const drop = { landY0: CROSS_C.y - ARM, landY1: CROSS_C.y + ARM, skip0: CROSS_C.y - PLAT - 10, skip1: CROSS_C.y + PLAT + 10 };
+      const start = CROSS_C.y + ARM + 80;
+      this.planes.push({ x: tx - 18, y: start, z: 120, dropCd: 0, ...drop }, { x: tx + 18, y: start + 30, z: 124, dropCd: stagger, ...drop });
       return true;
     }
     const front = this.bugs.filter((b) => b.dead < 0 && b.y < LINE_Y && b.y > 40);
     const mx = front.length ? front.reduce((a, b) => a + b.x, 0) / front.length : LANE_CX;
     const [a, b] = spanAt(LINE_Y - 200);
     const x = clamp(mx - 18, a + 6, b - 42);
-    this.planes.push({ x, y: PLANE_ENTRY_Y, z: 120, dropCd: 0 }, { x: x + 36, y: PLANE_ENTRY_Y + 30, z: 124, dropCd: 0.06 });
+    // 只炸防线前面：落点从防线一路到地图顶，不往自己的基地里扔。
+    const drop = { landY0: TOP_Y + 6, landY1: LINE_Y };
+    this.planes.push({ x, y: PLANE_ENTRY_Y, z: 120, dropCd: 0, ...drop }, { x: x + 36, y: PLANE_ENTRY_Y + 30, z: 124, dropCd: stagger, ...drop });
     return true;
   }
 
@@ -2392,14 +2506,17 @@ export class DefenseScene {
       cap: count ? count.values[s.up.count - 1] : 0,
       prog: s.prog,
       blocked: false,
-      hp: s.hp,
-      maxHp: d.hp,
-      // 巨舰不能卖（-1）。
-      refund: s === this.cruiserS ? -1 : this.refundOf(s),
+      hp: s === this.coreS ? this.coreHp : s.hp,
+      maxHp: s === this.coreS ? this.coreMax : d.hp,
+      // 巨舰、核心不能卖（-1）。
+      refund: s === this.cruiserS || s === this.coreS ? -1 : this.refundOf(s),
       stats: d.stats.map((st) => {
         const lv = s.up[st.key];
         const max = st.values.length;
-        return { key: st.key, name: st.name, level: lv, max, value: st.values[lv - 1], next: lv < max ? st.values[lv] : null, cost: lv < max ? st.costs[lv - 1] : null };
+        // 核心的三条线按实际的写（乘上商城的加成）。
+        const k = s === this.coreS ? this.perks.core[st.key as CoreStat] : 1;
+        const val = (i: number): number => Math.round(st.values[i] * k * 10) / 10;
+        return { key: st.key, name: st.name, level: lv, max, value: val(lv - 1), next: lv < max ? val(lv) : null, cost: lv < max ? st.costs[lv - 1] : null };
       }),
     };
   }
@@ -2703,10 +2820,10 @@ export class DefenseScene {
   }
 
   /** 建造模式的建筑：兵营出兵、车间出机甲（都是升门、单位走出来、绕开建筑去站位），尸体清理。 */
-  /** 出兵类造一个要几秒（兵营吃商城的"快速征召"）。 */
+  /** 出兵类造一个要几秒（商城的"快速征召"在 stat() 里乘到生产速度上）。 */
   buildTime(kind: BuildKind): number {
     const t = BUILDS[kind].time ?? 1;
-    return kind === 'barracks' ? Math.max(1, t - this.perks.draftTime) : t;
+    return t;
   }
 
   private updateStructures(dt: number): void {
@@ -2737,7 +2854,7 @@ export class DefenseScene {
         if (s.kind === 'barracks') {
           const spot = this.formationSpot(s);
           const unit = makeDefender('rifle', doorX, sill);
-          unit.hp = MARINE_HP * this.perks.marineHp;
+          unit.hp = this.maxHpOf(unit);
           unit.owner = s;
           unit.slotX = spot.x;
           unit.slotY = spot.y;
@@ -2747,6 +2864,7 @@ export class DefenseScene {
           this.defenders.push(unit);
         } else {
           const m = makeDefender('mech', doorX, sill);
+          m.hp = this.maxHpOf(m);
           m.owner = s;
           m.heading = Math.PI / 2;
           m.path = [v2(doorX, doorOut)];
@@ -2909,7 +3027,7 @@ export class DefenseScene {
         if (m.target && m.target.kind === 'flyer' && m.target.dead < 0 && d < 12) {
           this.fx.explode(m.x, m.y, m.z, 0.5);
           this.hurt(m.target, m.target.rank ? 8 * m.power : 99, m.x, m.y + 10, 0.7, 'missile');
-        } else if (m.z - ground < 15) this.explode(m.x, m.y, 0.55, m.power, 'missile');
+        } else if (m.z - ground < 15) this.explode(m.x, m.y, 0.55, m.power, 'missile', MECH_MISSILE_K);
         else this.fx.explode(m.x, m.y, m.z, 0.4);
         this.missiles.splice(i, 1);
       }
@@ -2930,10 +3048,13 @@ export class DefenseScene {
 
     for (let i = this.planes.length - 1; i >= 0; i--) {
       const p = this.planes[i];
-      p.y -= 240 * dt;
-      p.dropCd -= dt;
-      if (p.y < (p.dropY1 ?? LINE_Y - 120) && p.y > (p.dropY0 ?? 40) && p.dropCd <= 0) {
-        p.dropCd = 0.14;
+      p.y -= PLANE_SPEED * dt;
+      // 落点进了投弹区才开始倒计时：第一颗正好落在防线上，之后每隔 BOMB_GAP 一颗。
+      const land = p.y - BOMB_DRIFT;
+      const inZone = land < p.landY1 && land > p.landY0 && !(p.skip0 !== undefined && land > p.skip0 && land < p.skip1!);
+      if (inZone) p.dropCd -= dt;
+      if (inZone && p.dropCd <= 0) {
+        p.dropCd = BOMB_GAP / PLANE_SPEED;
         this.bombs.push({ x: p.x + (Math.random() - 0.5) * 6, y: p.y, z: p.z - 4, vy: -190, vz: 0 });
       }
       if (p.y < -400) this.planes.splice(i, 1);
@@ -3115,7 +3236,7 @@ export class DefenseScene {
           this.drawRange(ground, cam, s.x, s.y, r, rgba(110, 220, 255, 255), false);
           const next = statDef(s.kind, 'range');
           if (this.rangePreview && next && s.up.range < next.values.length) {
-            this.drawRange(ground, cam, s.x, s.y, this.baseRange(s.kind) * next.values[s.up.range], rgba(120, 245, 120, 255), true);
+            this.drawRange(ground, cam, s.x, s.y, this.baseRange(s.kind) * next.values[s.up.range] * this.perk(s.kind, 'range'), rgba(120, 245, 120, 255), true);
           }
         }
       }
@@ -3289,6 +3410,11 @@ export class DefenseScene {
       const tip = cam.worldToScreenZ(CORE.x, CORE.y, cz + 40 + Math.sin(this.time * 1.6) * 3);
       fx.disc(tip, Math.max(1, g * (1.2 + 0.6 * Math.sin(this.time * 5))), rgba(230, 255, 255, 200), 9);
       this.drawCoreBar(fx, cam);
+      // 核心有能升的线、晶矿又付得起：头顶也冒一个绿色箭头（不然没人知道核心能点）。
+      if (this.canUpgrade(this.coreS) && this.selected !== CORE_ID) {
+        const top = cam.worldToScreenZ(CORE.x, CORE.y, cz + 56);
+        this.drawUpArrow(fx, top.x, top.y + Math.sin(this.time * 3) * 1.5 * g, 4.2 * g, this.time * 3);
+      }
     }
   }
 
@@ -3321,6 +3447,12 @@ export class DefenseScene {
     drawPixelText(fx, `${Math.ceil(this.coreHp)}/${this.coreMax}`, v2(at.x, at.y + rows / 2 + 2 + px * 3.5), px, rgb(220, 236, 255), rgba(8, 10, 16, 220), 20.02);
   }
 
+  /** 选中的是核心：脚下一圈选中环；有反击的话画出反击范围。 */
+  private drawCoreSelection(ground: Layers['ground'], cam: Camera): void {
+    this.drawRange(ground, cam, CORE.x, CORE.y, 30, rgba(110, 220, 255, 230), false);
+    if (this.stat(this.coreS, 'strike') > 0) this.drawRange(ground, cam, CORE.x, CORE.y, CORE_STRIKE_R, rgba(150, 236, 255, 255), true);
+  }
+
   /** 选中的是巨舰：射程圈（悬停射程升级时再加一圈虚线）、脚下一圈选中环；在挪位置的话画虚线和目的地标记。 */
   private drawCruiserSelection(ground: Layers['ground'], cam: Camera): void {
     const c = this.cruiser;
@@ -3328,7 +3460,7 @@ export class DefenseScene {
     this.drawRange(ground, cam, c.x, c.y, this.cruiserRange(), rgba(110, 220, 255, 255), false);
     const next = statDef('cruiser', 'range');
     if (this.rangePreview && next && this.cruiserS.up.range < next.values.length) {
-      this.drawRange(ground, cam, c.x, c.y, CRUISER_RANGE * next.values[this.cruiserS.up.range], rgba(120, 245, 120, 255), true);
+      this.drawRange(ground, cam, c.x, c.y, CRUISER_RANGE * next.values[this.cruiserS.up.range] * this.perk('cruiser', 'range'), rgba(120, 245, 120, 255), true);
     }
     const foot = this.onGround(cam, c.x, c.y);
     ground.ellipse(foot, 70 * g, 70 * g * Projection.groundSquash, 0, rgba(110, 220, 255, 50), 2e6);
@@ -3457,8 +3589,8 @@ export class DefenseScene {
       this.hpBar(fx, cam, cam.worldToScreenZ(b.x, b.y, top), b.hp / b.maxHp, b.rank === 2 ? 14 : 6);
     }
     for (const d of this.defenders) {
-      if (d.kind === 'rifle' && d.deadT < 0) this.hpBar(fx, cam, cam.worldToScreenZ(d.x, d.y, d.z + 27), d.hp / (MARINE_HP * this.perks.marineHp), HP_PIPS);
-      if (d.kind === 'mech') this.hpBar(fx, cam, cam.worldToScreenZ(d.x, d.y, d.z + 54), d.hp / MECH_HP, 8);
+      if (d.kind === 'rifle' && d.deadT < 0) this.hpBar(fx, cam, cam.worldToScreenZ(d.x, d.y, d.z + 27), d.hp / this.maxHpOf(d), HP_PIPS);
+      if (d.kind === 'mech') this.hpBar(fx, cam, cam.worldToScreenZ(d.x, d.y, d.z + 54), d.hp / this.maxHpOf(d), 8);
     }
 
     for (const gun of this.guns) {
@@ -3501,6 +3633,7 @@ export class DefenseScene {
       drawPixelText(fx, o.text, cam.worldToScreenZ(o.x, o.y, o.z), px, rgba(255, 226, 168, a), rgba(110, 56, 14, Math.round(a * 0.9)), 21);
     }
 
+    if (this.selected === CORE_ID && !this.lost) this.drawCoreSelection(ground, cam);
     if (this.cruiserOn) {
       if (this.selected === CRUISER_ID) this.drawCruiserSelection(ground, cam);
       // 巨舰在天空层：地面上的一切（单位、血条、子弹、炮火、爆炸）都被它盖住。

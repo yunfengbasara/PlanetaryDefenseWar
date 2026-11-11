@@ -3,7 +3,7 @@ import { v2 } from '../core/math';
 import { Camera } from '../render/camera';
 import { Projection } from '../render/projection';
 import { Scene } from '../render/scene';
-import { AIRSTRIKE_COST, BUILDS, CRUISER_ID, type BuildKind, type StatKey } from './buildings';
+import { AIRSTRIKE_COST, BUILDS, CORE_ID, CRUISER_ID, type BuildKind, type StatKey } from './buildings';
 import { ARM, CROSS_C } from './crossmap';
 import { field, useField } from './fields';
 import { END_Y, FRAME_W, LANE_CX, TOP_Y } from './floor';
@@ -34,7 +34,7 @@ export interface DefenseHandle {
   structure(id: number): (StructureInfo & { anchorX: number; anchorY: number }) | null;
   /** 取消选中。 */
   deselect(): void;
-  /** 选中某座建筑（或者 CRUISER_ID = 巨舰）。 */
+  /** 选中某座建筑（或者 CRUISER_ID = 巨舰、CORE_ID = 水晶核心）。 */
   selectById(id: number): void;
   /** 升级面板上鼠标停在"射程"那一行：在地上多画一圈升级后的射程。 */
   previewRange(on: boolean): void;
@@ -48,6 +48,8 @@ export interface DefenseHandle {
   onEscape(fn: () => void): void;
   /** 暂停：战场不再推进（画面照画，镜头照样能拖）。 */
   setPaused(paused: boolean): void;
+  /** 游戏速度（1 / 2 / 4）：战场每帧推进几步。 */
+  setSpeed(speed: number): void;
   /** 引导遮罩用：建造区在舞台上的矩形。CSS 像素。 */
   buildAreaRect(): CssRect | null;
   /** 某种出兵建筑（第一座）连同它整个集结点范围在舞台上的矩形。 */
@@ -81,6 +83,10 @@ export interface BattleState {
   /** 场上血最多的 Boss（HUD 顶上的血条）；最近一次来 Boss 是第几波。 */
   boss: { name: string; hp: number; max: number } | null;
   bossWave: number;
+  /** 这一局的战绩：击杀、精英 / Boss / 飞虫各多少，水晶有没有哪条线升满过（成就用）。 */
+  tally: { kills: number; elites: number; bosses: number; flyers: number; coreMaxed: boolean };
+  /** 游戏速度（1 / 2 / 4）。 */
+  speed: number;
   /** 通关了没有（最后一波打完、虫清光），通关了多久。 */
   won: boolean;
   wonT: number;
@@ -97,6 +103,8 @@ export interface BuildState {
   built: Record<BuildKind, number>;
   /** 防线上的机枪兵（活着的）。 */
   marines: number;
+  /** 轰炸支援还要冷却几秒（0 = 能叫）。 */
+  airstrikeCd: number;
   /** 巨舰：这张图能不能买、买了没有。 */
   cruiser: 'available' | 'bought' | 'none';
   /** 当前选中的建筑；rallyEver：玩家设过集结点（引导用）。 */
@@ -195,6 +203,11 @@ export function bootDefense(app: Application): DefenseHandle {
   const escapeHooks: (() => void)[] = [];
   /** 暂停中：战场不推进。 */
   let paused = false;
+  /**
+   * 游戏速度：每帧让战场多走几步（每步还是同样的 dt），而不是把 dt 放大 —— 一步走太长子弹会穿过虫、单位会互相挤穿。
+   * 战场一步大约零点几毫秒，4 倍速每帧也只多花一两毫秒；画面还是每帧画一次。
+   */
+  let speed = 1;
   const select = (id: number | null): void => {
     if (!battle) return;
     battle.selected = id;
@@ -271,8 +284,8 @@ export function bootDefense(app: Application): DefenseHandle {
       select(null);
       return;
     }
-    // 没点到建筑：看看是不是点到了巨舰（它浮在战场旁边）。
-    select(hitStruct?.id ?? (battle.cruiserAt(w.x, w.y) ? CRUISER_ID : null));
+    // 没点到建筑：看看是不是点到了巨舰（它浮在战场旁边）或者水晶核心。
+    select(hitStruct?.id ?? (battle.cruiserAt(w.x, w.y) ? CRUISER_ID : battle.coreAt(w.x, w.y) ? CORE_ID : null));
   });
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && battle) {
@@ -307,7 +320,9 @@ export function bootDefense(app: Application): DefenseHandle {
       const z = cam.screenToWorld(cam.viewWidth, cam.viewHeight);
       battle.view = { l: a.x, t: a.y, r: z.x, b: z.y };
     }
-    if (!paused && !(battle.lost && battle.lostT > LOST_FREEZE)) battle.update(dt);
+    // 核心碎了 / 通关以后回到正常速度：爆炸和结算按正常节奏演。
+    const steps = battle.lost || battle.won ? 1 : speed;
+    for (let i = 0; i < steps && !paused && !(battle.lost && battle.lostT > LOST_FREEZE); i++) battle.update(dt);
     // 钱被花掉了（比如刚升级）：虚影跟着变红。
     if (battle.ghost && placing) battle.ghost.valid = battle.placeable(placing, battle.ghost.x, battle.ghost.y) && battle.crystals >= BUILDS[placing].cost;
     // 缩放和平移都直接到位，不做缓动：grain 每变一点，整块地板落在哪些像素上就全变一次，
@@ -329,6 +344,7 @@ export function bootDefense(app: Application): DefenseHandle {
       paused = false;
       useField(fieldId);
       battle = new DefenseScene(opts);
+      speed = 1;
       placing = null;
       rallyEver = false;
       pan = v2(0, 0);
@@ -362,6 +378,8 @@ export function bootDefense(app: Application): DefenseHandle {
         buff: waveBuff(Math.max(1, b.wave), b.endless),
         boss: b.boss,
         bossWave: b.bossWave,
+        speed,
+        tally: b.tally,
         wave: { current: b.wave, total: b.endless ? 0 : b.field.waves, nextIn: b.nextIn, timer: b.waveTimer, nextSize: b.nextWaveSize, left: b.bugsLeft, bonus: b.earlyBonus, lock: b.wave > 0 ? b.callLock : 0, started: b.waves },
         won: b.won,
         wonT: b.wonT,
@@ -374,8 +392,10 @@ export function bootDefense(app: Application): DefenseHandle {
             tank: b.structures.filter((s) => s.kind === 'tank').length,
             artillery: b.structures.filter((s) => s.kind === 'artillery').length,
             cruiser: b.cruiserBought ? 1 : 0,
+            core: 1,
           },
           marines: b.defenders.filter((d) => d.kind === 'rifle' && d.deadT < 0).length,
+          airstrikeCd: b.airstrikeCd,
           cruiser: !b.field.cruiser ? 'none' : b.cruiserBought ? 'bought' : 'available',
           selected: b.selected,
           rallyEver,
@@ -420,6 +440,9 @@ export function bootDefense(app: Application): DefenseHandle {
     onEscape: (fn) => escapeHooks.push(fn),
     setPaused: (p) => {
       paused = p;
+    },
+    setSpeed: (s) => {
+      speed = s;
     },
     rallyAreaRect: (kind) => {
       const s = battle?.structures.find((o) => o.kind === kind);

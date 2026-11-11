@@ -228,7 +228,7 @@ export const MENU_CSS = `
 .pdw-kv { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 
 .pdw-menu .pdw-desc { margin: 12px 0; color: #b6c2dc; font-size: 13px; line-height: 1.7; }
-.pdw-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.pdw-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
 .pdw-stat {
   display: flex; flex-direction: column; gap: 2px; padding: 6px 10px;
   background: rgba(20,30,52,.6); border-left: 2px solid var(--line-hi);
@@ -311,6 +311,35 @@ export const MENU_CSS = `
 .pdw-btn.buy { height: 30px; font-size: 13px; letter-spacing: 1px; }
 .pdw-btn.buy svg { color: var(--orange); }
 .pdw-btn.buy.owned { color: #8fe08f; }
+.pdw-shop.pdw-shop { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pdw-shop-card { display: flex; flex-direction: column; gap: 4px; padding: 10px; background: var(--panel-2); border: 2px solid var(--line); }
+.pdw-shop-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.pdw-shop-head .pdw-item-art { flex: none; }
+.pdw-shop-head .pdw-item-art canvas { width: 96px; height: 54px; }
+.pdw-shop-head b { display: block; font-size: 15px; margin-top: 2px; }
+.pdw-shop-head .pdw-tag { position: static; }
+.pdw-shop-row { display: flex; align-items: center; gap: 8px; min-height: 30px; font-size: 12px; }
+.pdw-shop-name { width: 56px; color: #dbe4f5; }
+.pdw-shop-name.wide { width: auto; flex: 1; color: var(--muted); }
+.pdw-shop-lv { width: 40px; font: 700 12px Consolas, monospace; color: #ffc446; }
+.pdw-shop-eff { flex: 1; font: 12px Consolas, monospace; color: var(--muted); white-space: nowrap; }
+.pdw-shop-eff em { font-style: normal; color: #8fe08f; }
+.pdw-shop-eff em.next { color: #ffc446; }
+.pdw-shop-row .pdw-btn.buy { height: 26px; min-width: 84px; padding: 0 8px; font-size: 12px; }
+.pdw-badge.hidden { display: none; }
+.pdw-ach-group { margin: 8px 0 0; font: 700 12px Consolas, "Microsoft YaHei", monospace; letter-spacing: 2px; color: var(--orange); }
+.pdw-ach-group:first-child { margin-top: 0; }
+.pdw-ach-text small svg { width: 11px; height: 11px; vertical-align: -1px; color: var(--orange); }
+.pdw-toasts { position: absolute; left: 50%; top: 64px; transform: translateX(-50%); z-index: 30; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+.pdw-toast {
+  display: flex; align-items: center; gap: 10px; padding: 8px 14px; min-width: 240px;
+  background: rgba(20, 14, 6, .92); border: 2px solid #7a5a24; color: #fff; font: 13px "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  animation: pdw-toast 3.6s ease forwards;
+}
+.pdw-toast svg { width: 22px; height: 22px; color: var(--orange); flex: none; }
+.pdw-toast small { display: block; font-size: 11px; color: #f0c07a; }
+.pdw-toast em { margin-left: auto; font: 700 13px Consolas, monospace; font-style: normal; color: #ffe2a8; }
+@keyframes pdw-toast { 0% { opacity: 0; transform: translateY(-8px); } 8%, 85% { opacity: 1; transform: none; } 100% { opacity: 0; } }
 .pdw-btn.buy.equipped { color: #ffc446; }
 .pdw-item.owned { border-color: #3a6a3a; }
 .pdw-btn.endless { height: 44px; padding: 0 16px; }
@@ -408,6 +437,11 @@ export const MENU_CSS = `
 .pdw-wave-call em { display: flex; align-items: center; gap: 3px; font: 700 12px Consolas, monospace; font-style: normal; color: #8fe6ff; letter-spacing: 0; }
 .pdw-wave-call em i { font-style: normal; }
 .pdw-wave-call svg { width: 11px; height: 11px; color: #5fd8e8; }
+.pdw-speed { display: flex; gap: 4px; margin-top: 5px; }
+/* 按钮的深色底是 ::before 画的（盖在 background 上），选中的档位要连 ::before 一起换成橙色，字才看得清。 */
+.pdw-speed .pdw-btn { flex: 1; height: 22px; padding: 0; justify-content: center; font: 700 12px Consolas, monospace; letter-spacing: 1px; color: var(--text); }
+.pdw-speed .pdw-btn.on { color: #1a0e02; background: var(--orange); }
+.pdw-speed .pdw-btn.on::before { background: var(--orange); }
 
 /* ---------------------------------------------------------------- "第 N 波来袭" */
 .pdw-banner {

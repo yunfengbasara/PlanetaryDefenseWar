@@ -1,5 +1,5 @@
 import { Mesh3 } from '../mesh/mesh';
-import { LIVERY_BLUE, aaTurret, barracks, battlecruiser, gunship, mechFactory, siegeTank } from '../mesh/models';
+import { LIVERY_BLUE, aaTurret, barracks, battlecruiser, crystalCore, gunship, mechFactory, siegeTank } from '../mesh/models';
 
 /**
  * 建造模式（新兵训练场）里能造的东西：造价、占地、生产时间、各条升级线，以及各自用哪个模型画。
@@ -15,10 +15,18 @@ import { LIVERY_BLUE, aaTurret, barracks, battlecruiser, gunship, mechFactory, s
  * 每条升级线各自独立升级（各 4 级，见下面的 DMG / RATE / RANGE / SPEED）。
  */
 
-/** cruiser（巨舰）不在建造列表里放置，买下后停在战场旁边；在这里登记只是为了升级面板和升级线。 */
-export type BuildKind = 'barracks' | 'factory' | 'tank' | 'artillery' | 'cruiser';
-/** 升级线：count 产量上限，speed 生产速度倍率，dmg 攻击力倍率，range 射程倍率，rate 射速倍率。 */
-export type StatKey = 'count' | 'speed' | 'dmg' | 'range' | 'rate';
+/**
+ * cruiser（巨舰）不在建造列表里放置，买下后停在战场旁边；core（水晶核心）开局就在。这两个登记在这里只是为了
+ * 升级面板和升级线（不在 BUILD_ORDER 里，不能造、不能卖）。
+ */
+export type BuildKind = 'barracks' | 'factory' | 'tank' | 'artillery' | 'cruiser' | 'core';
+/**
+ * 升级线：count 产量上限，speed 生产速度倍率，dmg 攻击力倍率，range 射程倍率，rate 射速倍率；
+ * 水晶核心专用：hp 血量上限，strike 反击（每秒打身边最近的一只多少），regen 每秒回多少血。核心这三条的数值是绝对值，不是倍率。
+ */
+export type StatKey = 'count' | 'speed' | 'dmg' | 'range' | 'rate' | 'hp' | 'strike' | 'regen';
+/** 一座新建筑每条升级线的等级（都从 1 开始）。 */
+export const freshUp = (): Record<StatKey, number> => ({ count: 1, speed: 1, dmg: 1, range: 1, rate: 1, hp: 1, strike: 1, regen: 1 });
 
 export interface StatDef {
   key: StatKey;
@@ -134,18 +142,39 @@ export const BUILDS: Record<BuildKind, BuildDef> = {
     top: 60,
     stats: [DMG(1000), RANGE(1000), RATE(1000)],
   },
+  /**
+   * 水晶核心：点它弹升级面板（用晶矿升）。血量上限 200 → 300 → 420 → 600（升的时候当前血量跟着加上去）；
+   * 反击：虫进了 CORE_STRIKE_R 以内，每秒朝最近的一只打一下（单体，Lv1 没有）；自动恢复：每秒回血（Lv1 没有）。
+   */
+  core: {
+    kind: 'core',
+    name: '水晶核心',
+    desc: '虫群的目标：血打空这一局就输了',
+    cost: 0,
+    hp: 200,
+    w: 36,
+    h: 36,
+    top: 44,
+    stats: [
+      { key: 'hp', name: '血量上限', values: [200, 300, 420, 600], costs: [150, 300, 600] },
+      { key: 'strike', name: '反击', values: [0, 2, 4, 8], costs: [200, 400, 800] },
+      { key: 'regen', name: '自动恢复', values: [0, 0.5, 1, 2], costs: [150, 300, 600] },
+    ],
+  },
 };
 
-export const BUILD_ORDER: BuildKind[] = ['barracks', 'factory', 'tank', 'artillery'];
+export const BUILD_ORDER: ('barracks' | 'factory' | 'tank' | 'artillery')[] = ['barracks', 'factory', 'tank', 'artillery'];
 
-/** 轰炸支援：每叫一次的价钱。 */
+/** 轰炸支援：每叫一次的价钱、叫完之后多久才能再叫（秒，按战场时间算，倍速下跟着变快）。 */
 export const AIRSTRIKE_COST = 500;
+export const AIRSTRIKE_CD = 20;
 /** 巨舰（战列巡航舰）：一局只能买一艘，买下后从画面外飞到战场旁边待命，自动开主炮。 */
 export const CRUISER_COST = 1500;
 /** 巨舰主炮的基础射程（以舰身为圆心）。 */
 export const CRUISER_RANGE = 460;
-/** 巨舰在升级面板里用的编号（建筑的编号从 1 开始）。 */
+/** 巨舰、水晶核心在升级面板里用的编号（建筑的编号从 1 开始）。 */
 export const CRUISER_ID = 0;
+export const CORE_ID = -1;
 
 export const statDef = (kind: BuildKind, key: StatKey): StatDef | undefined => BUILDS[kind].stats.find((s) => s.key === key);
 
@@ -163,6 +192,8 @@ export function buildingMesh(kind: BuildKind, x: number, y: number, t: number, d
       return aaTurret(m.rotZ(-Math.PI / 2), { yaw: 0, pitch: 0.6, recoil: 0 }, LIVERY_BLUE.base, LIVERY_BLUE.panel);
     case 'cruiser':
       return battlecruiser(m.rotZ(-2.4).scale(0.42), { charge: 0, thrust: 1 }, LIVERY_BLUE);
+    case 'core':
+      return crystalCore(m, { t, hit: 0 }, LIVERY_BLUE);
   }
 }
 

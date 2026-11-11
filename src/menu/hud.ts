@@ -4,7 +4,7 @@ import type { BattleState } from '../game/main';
  * 局内 HUD：
  *
  *   右上角   波次面板（当前第几波、场上还剩多少虫；下一波第几波、多少只、倒计时；"下一波"按钮，
- *            提前叫按剩余秒数给晶矿，上一波刚来时要等几秒才能再叫）→ 晶矿数 → 本局挣到的信用点 → （外面挂上来的）建造列表
+ *            提前叫按剩余秒数给晶矿，上一波刚来时要等几秒才能再叫；下面一排 1× / 2× / 4× 游戏速度）→ 晶矿数 → 本局挣到的信用点 → （外面挂上来的）建造列表
  *   上方正中 每来一波闪一行"第 N 波来袭"；刚突破里程碑的话下面再加一行"突破第 N 波 · 信用点 +M"，Boss 波再加一行"首领出现"；
  *            场上有 Boss 时下方正中常驻一条 Boss 血条（放上面会挡住刚走进画面的 Boss）
  *   无尽模式 波次面板不写总波数，多一行当前虫群强化（血量倍率、防御）；结算写坚持到第几波、最佳纪录
@@ -33,6 +33,8 @@ export interface HudActions {
   nextWave(): void;
   /** 暂停界面上点"继续游戏"。 */
   resume(): void;
+  /** 换游戏速度（1 / 2 / 4）。 */
+  setSpeed(speed: number): void;
 }
 
 const clock = (sec: number): string => {
@@ -77,6 +79,7 @@ export class Hud {
         <div class="pdw-wave-buff" data-f="buff"></div>
         <div class="pdw-wave-bar"><i data-f="bar"></i></div>
         <button class="pdw-btn pdw-wave-call" data-act="next"><span data-f="call">下一波</span><em>${CRYSTAL_ICON}<i data-f="bonus"></i></em></button>
+        <div class="pdw-speed">${[1, 2, 4].map((n) => `<button class="pdw-btn" data-speed="${n}">${n}×</button>`).join('')}</div>
       </div>
       <div class="pdw-crystal">${CRYSTAL_ICON}<b></b><em>晶矿</em></div>
       <div class="pdw-crystal pdw-credit">${CREDIT_ICON}<b></b><em>信用点</em></div>`;
@@ -84,6 +87,7 @@ export class Hud {
     this.creditText = this.bar.querySelector('.pdw-credit b')!;
     this.waveEl = this.bar.querySelector('.pdw-wave')!;
     this.bar.querySelector('[data-act=next]')!.addEventListener('click', () => actions.nextWave());
+    this.bar.querySelectorAll<HTMLElement>('[data-speed]').forEach((b) => b.addEventListener('click', () => actions.setSpeed(Number(b.dataset.speed))));
     this.bar.querySelector('.pdw-wave')!.addEventListener('pointerdown', (e) => e.stopPropagation());
 
     this.banner.className = 'pdw-banner hidden';
@@ -274,5 +278,7 @@ export class Hud {
     const off = st.lost || st.won || last || w.lock > 0;
     if (btn.disabled !== off) btn.disabled = off;
     this.waveEl.classList.toggle('soon', !last && w.nextIn <= 5);
+    // 游戏速度：当前档位高亮。
+    this.waveEl.querySelectorAll<HTMLElement>('[data-speed]').forEach((b) => b.classList.toggle('on', Number(b.dataset.speed) === st.speed));
   }
 }

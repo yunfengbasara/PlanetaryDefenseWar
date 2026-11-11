@@ -4,7 +4,7 @@ import { Pose } from '../characters/rig';
 import { buildingMesh, cruiserMesh } from '../game/buildings';
 import { MARINE_KIT, MARINE_SCALE, aimPose } from '../game/scene';
 import { Mesh3, drawMesh, drawShadow } from '../mesh/mesh';
-import { LIVERY_BLUE, siegeTank, walkerMech } from '../mesh/models';
+import { LIVERY_BLUE, aaTurret, crystalCore, siegeTank, walkerMech } from '../mesh/models';
 import { LIVERY_RED } from '../game/livery';
 import { rgb } from '../render/color';
 import { Projection } from '../render/projection';
@@ -19,10 +19,13 @@ import type { Snapshotter } from '../render/snapshot';
  *   barracks  快速征召     开着门的兵营
  *   mech      导弹巢扩容   步行机甲
  *   cruiser   主炮校准     战列巡航舰
+ *   tank      重型炮弹     攻城坦克
+ *   aa        高爆弹链     火炮
+ *   core      水晶加固     水晶核心
  *   livery    涂装：猩红   换上红黑涂装的坦克
  */
 
-export type ShopIcon = 'marine' | 'ammo' | 'barracks' | 'mech' | 'cruiser' | 'livery';
+export type ShopIcon = 'marine' | 'ammo' | 'barracks' | 'mech' | 'cruiser' | 'tank' | 'aa' | 'core' | 'livery';
 
 /** 图标的缓冲尺寸（CSS 里放大两倍显示）。 */
 const ICON_W = 64;
@@ -45,8 +48,8 @@ function ammoCrate(): Mesh3 {
 
 /** 画一个商品图标，返回一张 canvas（缓冲 64×36，显示时放大两倍）。 */
 export function shopIcon(snap: Snapshotter, icon: ShopIcon): HTMLCanvasElement {
-  const grain = { marine: 1.55, ammo: 1.3, barracks: 0.62, mech: 0.56, cruiser: 0.6, livery: 0.82 }[icon];
-  const tall = { marine: 18, ammo: 14, barracks: 38, mech: 46, cruiser: 0, livery: 22 }[icon];
+  const grain = { marine: 1.55, ammo: 1.3, barracks: 0.62, mech: 0.56, cruiser: 0.6, tank: 0.82, aa: 1.25, core: 0.95, livery: 0.82 }[icon];
+  const tall = { marine: 18, ammo: 14, barracks: 38, mech: 46, cruiser: 0, tank: 22, aa: 28, core: 44, livery: 22 }[icon];
   const cam = snap.camera(ICON_W, ICON_H);
   cam.grain = grain;
   cam.x = 0;
@@ -69,7 +72,13 @@ export function shopIcon(snap: Snapshotter, icon: ShopIcon): HTMLCanvasElement {
             ? walkerMech(new Mesh3().rotZ(Math.PI / 2 + 0.5), { torso: 0, step: 0.25, recoil: 0, stride: 0 }, LIVERY_BLUE)
             : icon === 'cruiser'
               ? cruiserMesh()
-              : siegeTank(new Mesh3().rotZ(-Math.PI / 2 - 0.5), { turret: 0.4, recoil: 0, deploy: 1 }, LIVERY_RED);
+              : icon === 'tank'
+                ? siegeTank(new Mesh3().rotZ(-Math.PI / 2 - 0.5), { turret: 0.4, recoil: 0, deploy: 1 }, LIVERY_BLUE)
+                : icon === 'aa'
+                  ? aaTurret(new Mesh3().rotZ(-Math.PI / 2 - 0.5), { yaw: 0.3, pitch: 0.6, recoil: 0 }, LIVERY_BLUE.base, LIVERY_BLUE.panel)
+                  : icon === 'core'
+                    ? crystalCore(new Mesh3(), { t: 1, hit: 0 }, LIVERY_BLUE)
+                    : siegeTank(new Mesh3().rotZ(-Math.PI / 2 - 0.5), { turret: 0.4, recoil: 0, deploy: 1 }, LIVERY_RED);
     if (icon !== 'cruiser') drawShadow(layers.ground, c, mesh, 0, 9e5, 70);
     drawMesh(icon === 'cruiser' ? layers.sky : layers.units, c, mesh, v2(0, 0));
   });

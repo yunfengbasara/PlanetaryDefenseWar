@@ -13,7 +13,7 @@ import { Snapshotter } from '../render/snapshot';
  *   BuildPanel   右上角晶矿下面一列：兵营、机器人车间、坦克、火炮、巨舰、轰炸支援。缩略图用游戏自己的
  *                模型现画。建筑点一下进入放置模式（再点一下取消）；巨舰一局买一次（买了显示"已部署"）；
  *                数字键 1~6 是快捷键。钱不够的项变暗。
- *   UpgradeTip   点了地图上的建筑后，在它头顶弹出的小面板：产量、每条升级线（数量 / 攻击力 / 射程 / 射速）
+ *   UpgradeTip   点了地图上的建筑（或巨舰、水晶核心）后，在它头顶弹出的小面板：产量、每条升级线（数量 / 攻击力 / 射程 / 射速）
  *                的等级、当前 → 下一级的数值、升级按钮。面板跟着建筑走（镜头动了也对得上）。
  *                骨架只搭一次，之后每帧只改变了的文字 —— 整块重写会打断鼠标悬停，按钮会闪。
  *                面板半透明，而且除了按钮都让鼠标穿过去：隔着面板也能右键设集结点、点地面。
@@ -23,13 +23,13 @@ import { Snapshotter } from '../render/snapshot';
 const CRYSTAL =
   '<svg viewBox="0 0 16 16"><path d="M8 1l5 5-5 9-5-9z" fill="currentColor"/><path d="M8 1l2 5-2 9z" fill="#fff" opacity=".35"/></svg>';
 
-type Item = BuildKind | 'cruiser' | 'airstrike';
+type Item = Exclude<BuildKind, 'core'> | 'airstrike';
 const ITEMS: Item[] = [...BUILD_ORDER, 'cruiser', 'airstrike'];
 
 const ITEM_NAME: Record<'cruiser' | 'airstrike', string> = { cruiser: '巨舰', airstrike: '轰炸支援' };
 const ITEM_DESC: Record<'cruiser' | 'airstrike', string> = {
   cruiser: '战列巡航舰：一局一艘，飞到战场旁边待命，隔一阵开一发主炮',
-  airstrike: '花晶矿叫一组炮艇，沿虫最多的地方投弹',
+  airstrike: '花晶矿叫一组炮艇，沿虫最多的那一列飞过战场，从防线往前炸出一整条；叫完要冷却一会儿',
 };
 const itemCost = (item: Item): number => (item === 'airstrike' ? AIRSTRIKE_COST : item === 'cruiser' ? CRUISER_COST : BUILDS[item].cost);
 
@@ -83,7 +83,14 @@ export class BuildPanel {
       // 巨舰：这张图不能买就一直暗着；买过了就亮着（点它选中巨舰），价钱那里写"已部署"。
       const bought = item === 'cruiser' && st.build.cruiser === 'bought';
       const none = item === 'cruiser' && st.build.cruiser === 'none';
-      b.classList.toggle('off', none || st.lost || (!bought && st.crystals < cost));
+      // 轰炸支援冷却中：变暗，价钱那里倒数秒数。
+      const cooling = item === 'airstrike' && st.build.airstrikeCd > 0;
+      b.classList.toggle('off', none || st.lost || cooling || (!bought && st.crystals < cost));
+      if (item === 'airstrike') {
+        const label = cooling ? `冷却 ${Math.ceil(st.build.airstrikeCd)}s` : `${cost}`;
+        const el = b.querySelector('[data-f=cost]')!;
+        if (el.textContent !== label) el.textContent = label;
+      }
       b.classList.toggle('active', st.build.placing === item);
       if (item === 'cruiser') {
         const label = st.build.cruiser === 'bought' ? '已部署' : st.build.cruiser === 'none' ? '本战区不可用' : `${cost}`;
@@ -94,7 +101,7 @@ export class BuildPanel {
   }
 
   /** 某一项在舞台上的矩形（引导遮罩要把它亮出来）。 */
-  itemRect(item: BuildKind, stage: HTMLElement): { x: number; y: number; w: number; h: number } {
+  itemRect(item: Item, stage: HTMLElement): { x: number; y: number; w: number; h: number } {
     const r = this.buttons.get(item)!.getBoundingClientRect();
     const o = stage.getBoundingClientRect();
     return { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height };
@@ -138,8 +145,9 @@ function thumb(snap: Snapshotter, item: Item): HTMLCanvasElement {
   return out;
 }
 
-/** 一条升级线的数值怎么写：数量是个数，其余是倍率。 */
-const fmt = (key: StatKey, v: number): string => (key === 'count' ? `${v}` : `×${v}`);
+/** 一条升级线的数值怎么写：数量、核心血量是个数，反击和回血是每秒多少（0 写"无"），其余是倍率。 */
+const fmt = (key: StatKey, v: number): string =>
+  key === 'count' || key === 'hp' ? `${v}` : key === 'strike' || key === 'regen' ? (v ? `${v}/秒` : '无') : `×${v}`;
 
 /** 改一个节点的文字 / 属性：没变就不碰 DOM（鼠标悬停、按下的状态才不会被打断）。 */
 function setText(el: Element, text: string): void {
@@ -203,7 +211,9 @@ export class UpgradeTip {
          <div class="pdw-tip-hint">右键点击地面设置集结点</div>`
       : kind === 'cruiser'
         ? '<div class="pdw-tip-hint">右键点击地面移动巨舰</div>'
-        : '';
+        : kind === 'core'
+          ? '<div class="pdw-tip-hint">反击：虫靠近水晶时自动射击；升级血量上限时当前血量一起涨</div>'
+          : '';
     const rows = d.stats
       .map(
         (st) => `

@@ -1,8 +1,9 @@
 import type { BugKind } from '../game/bugs';
 import { FIELDS, type FieldDef } from '../game/fields';
-import type { Perks } from '../game/scene';
+import type { CoreStat, PerkStat, PerkUnit, Perks } from '../game/scene';
 import { save } from '../save';
 import type { GuideStep } from './hints';
+import type { ShopIcon } from './shopIcons';
 
 /**
  * 主界面上展示用的静态数据。field 对应 game/fields.ts 里的战场。
@@ -66,7 +67,7 @@ function speedText(f: FieldDef): string {
   return k < 0.8 ? '慢' : k < 1.15 ? '中' : k < 1.5 ? '快' : '极快';
 }
 
-/** 详情里的那几格：战区类型、通关波次、虫群速度、首通奖励（波次和速度从战场定义读）。 */
+/** 详情里的那几格：战区类型、通关波次、虫群速度、首通奖励、通关次数（波次和速度从战场定义读）。 */
 export function mapStats(m: MapInfo): { label: string; value: string }[] {
   const f = FIELDS[m.field];
   return [
@@ -74,6 +75,7 @@ export function mapStats(m: MapInfo): { label: string; value: string }[] {
     { label: '通关波次', value: `${f.waves} 波` },
     { label: '虫群速度', value: speedText(f) },
     { label: '首通奖励', value: m.reward.toLocaleString() },
+    { label: '通关次数', value: `${save.clears(m.id)} 次` },
   ];
 }
 
@@ -199,35 +201,91 @@ export const MAPS: MapInfo[] = [
 ];
 
 /**
- * 商城：花信用点买永久强化，买一次一直有效（存档 owned）。icon 是图标画哪个模型（menu/shopIcons.ts）。
- * 效果在 currentPerks() 里折算成战场的 Perks，开局传进 DefenseScene；涂装买下后在商城里随时换。
+ * 商城：花信用点买永久强化，没有等级上限（无尽模式越往后越需要）。
+ *
+ * 按守军分组：机枪兵、机甲、坦克、火炮、巨舰各有攻击力、射程、射速（出兵的两种再加生产速度、生命），对应局内的升级线，
+ * 但每级只加一点点（step），乘在局内升级之上；数量线不在商城里卖。另外是水晶核心的血量上限和一次性买断的涂装。
+ * 下一级的价钱 = 基础价 × PRICE_GROWTH^当前等级（越往后越贵，取整到 10）。
+ * 效果在 currentPerks() 里折算成战场的 Perks，开局传进 DefenseScene。
  */
-export const SHOP_ITEMS = [
-  { id: 'armor', icon: 'marine' as const, name: '强化装甲', desc: '机枪兵生命 +20%', price: 800, tag: '守军' },
-  { id: 'ammo', icon: 'ammo' as const, name: '穿甲弹匣', desc: '步枪伤害 +15%', price: 1200, tag: '火力' },
-  { id: 'draft', icon: 'barracks' as const, name: '快速征召', desc: '兵营造兵时间 -1 秒', price: 1500, tag: '后勤' },
-  { id: 'missiles', icon: 'mech' as const, name: '导弹巢扩容', desc: '机甲每轮多发 2 枚导弹', price: 2000, tag: '机甲' },
-  { id: 'cannon', icon: 'cruiser' as const, name: '主炮校准', desc: '战列巡航舰冷却 -20%', price: 2600, tag: '舰队' },
-  { id: 'livery-red', icon: 'livery' as const, name: '涂装：猩红', desc: '全军换上红黑涂装', price: 3000, tag: '外观' },
-];
-
-/** 按存档里买过的东西算出这一局的强化。 */
-export function currentPerks(): Perks {
-  return {
-    marineHp: save.owns('armor') ? 1.2 : 1,
-    rifleDmg: save.owns('ammo') ? 1.15 : 1,
-    draftTime: save.owns('draft') ? 1 : 0,
-    missiles: save.owns('missiles') ? 2 : 0,
-    cruiserCd: save.owns('cannon') ? 0.8 : 1,
-  };
+export interface ShopLine {
+  /** 存档里的 id：<守军>.<强化>，比如 barracks.dmg；水晶是 core.hp / core.strike / core.regen。 */
+  id: string;
+  stat: PerkStat | CoreStat;
+  name: string;
+  /** 每级加多少（倍率的增量）；第 1 级的价钱。 */
+  step: number;
+  price: number;
 }
 
-/** 成就：目前只有展示，进度还没接上统计，全部从 0 开始。 */
-export const ACHIEVEMENTS = [
-  { name: '第一滴血', desc: '击杀第一只虫子', progress: 0, goal: 1 },
-  { name: '灭虫专家', desc: '累计击杀 10,000 只虫子', progress: 0, goal: 10000 },
-  { name: '钢铁防线', desc: '一局内没有任何机枪兵阵亡并坚持 3 分钟', progress: 0, goal: 1 },
-  { name: '防空网', desc: '击落 500 只飞虫', progress: 0, goal: 500 },
-  { name: '天降正义', desc: '战列巡航舰一炮击杀 30 只虫子', progress: 0, goal: 1 },
-  { name: '老兵不死', desc: '同一名机枪兵存活 10 分钟', progress: 0, goal: 1 },
+export interface ShopGroup {
+  unit: PerkUnit | 'core';
+  icon: ShopIcon;
+  name: string;
+  tag: string;
+  lines: ShopLine[];
+}
+
+export const PRICE_GROWTH = 1.4;
+
+/** 强化项的名字、每级加多少、基础价相对守军基础价的倍数（射程加得最少，因为射程太远炮台会在后方就把虫清光）。 */
+const LINE_SPEC: Record<PerkStat, { name: string; step: number; k: number }> = {
+  dmg: { name: '攻击力', step: 0.03, k: 1 },
+  rate: { name: '射速', step: 0.03, k: 1 },
+  range: { name: '射程', step: 0.02, k: 0.8 },
+  speed: { name: '生产速度', step: 0.03, k: 0.8 },
+  hp: { name: '生命', step: 0.04, k: 0.8 },
+};
+
+const group = (unit: PerkUnit | 'core', icon: ShopIcon, name: string, tag: string, base: number, stats: PerkStat[]): ShopGroup => ({
+  unit,
+  icon,
+  name,
+  tag,
+  lines: stats.map((st) => ({ id: `${unit}.${st}`, stat: st, name: LINE_SPEC[st].name, step: LINE_SPEC[st].step, price: Math.round((base * LINE_SPEC[st].k) / 10) * 10 })),
+});
+
+export const SHOP_GROUPS: ShopGroup[] = [
+  group('barracks', 'marine', '机枪兵', '兵营', 150, ['dmg', 'rate', 'range', 'speed', 'hp']),
+  group('factory', 'mech', '步行机甲', '车间', 220, ['dmg', 'rate', 'range', 'speed', 'hp']),
+  group('tank', 'tank', '攻城坦克', '炮塔', 200, ['dmg', 'rate', 'range']),
+  group('artillery', 'aa', '火炮', '防空', 180, ['dmg', 'rate', 'range']),
+  group('cruiser', 'cruiser', '战列巡航舰', '舰队', 300, ['dmg', 'rate', 'range']),
+  // 反击、自动恢复乘在局内的升级线上：局内还是 0 级（没有反击 / 不回血）时，商城加成也不起作用。
+  {
+    unit: 'core',
+    icon: 'core',
+    name: '水晶核心',
+    tag: '核心',
+    lines: [
+      { id: 'core.hp', stat: 'hp', name: '血量上限', step: 0.05, price: 200 },
+      { id: 'core.strike', stat: 'strike', name: '反击', step: 0.05, price: 200 },
+      { id: 'core.regen', stat: 'regen', name: '自动恢复', step: 0.05, price: 200 },
+    ],
+  },
 ];
+
+/** 一次性买断的涂装。 */
+export const LIVERY_ITEM = { id: 'livery-red', icon: 'livery' as ShopIcon, name: '涂装：猩红', desc: '全军换上红黑涂装', tag: '外观', price: 3000 };
+
+/** 一项强化升到下一级要多少信用点。 */
+export const shopPrice = (line: ShopLine, level: number): number => Math.round((line.price * PRICE_GROWTH ** level) / 10) * 10;
+
+/** 一项强化在 level 级时的倍率：1 + step × 级数。 */
+export const shopValue = (line: ShopLine, level: number): number => 1 + line.step * level;
+
+/** 倍率写成"+12%"。 */
+export const shopEffect = (line: ShopLine, level: number): string => `+${Math.round((shopValue(line, level) - 1) * 100)}%`;
+
+/** 按存档里每项强化的等级算出这一局的强化。 */
+export function currentPerks(): Perks {
+  const perks: Perks = { units: {}, core: { hp: 1, strike: 1, regen: 1 } };
+  for (const g of SHOP_GROUPS) {
+    for (const line of g.lines) {
+      const v = shopValue(line, save.level(line.id));
+      if (g.unit === 'core') perks.core[line.stat as CoreStat] = v;
+      else (perks.units[g.unit] ??= {})[line.stat as PerkStat] = v;
+    }
+  }
+  return perks;
+}
